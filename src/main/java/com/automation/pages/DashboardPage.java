@@ -7,6 +7,8 @@ import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.support.FindBy;
 
+import java.util.List;
+
 /**
  * Page Object for the Frndly TV home / dashboard page ({@code watch.frndlytv.com/home}).
  *
@@ -100,6 +102,27 @@ public class  DashboardPage extends BasePage {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * Scrolls the full page to trigger Angular lazy-loading, then returns the text of
+     * every {@code <h3 class="ott_tray_title">} heading found in the DOM.
+     *
+     * <p>Call this after navigating to {@code /home} to get the complete list of row
+     * names available for the authenticated account. The list can then be used to pick
+     * a row (e.g. at random) before calling {@link #clickFirstCardInRow(String)}.
+     *
+     * @return ordered list of row heading strings (never {@code null}, may be empty)
+     */
+    @SuppressWarnings("unchecked")
+    public List<String> getRowNames() {
+        scrollPageToLoadAllRows();
+        List<String> names = (List<String>) ((JavascriptExecutor) driver).executeScript(
+                "return Array.from(document.querySelectorAll('h3.ott_tray_title'))"
+                + "  .map(function(h){ return h.textContent.trim(); })"
+                + "  .filter(function(t){ return t.length > 0; });");
+        log.info("Dashboard rows found ({}): {}", names.size(), names);
+        return names;
     }
 
     // ── Row-scanning helpers ──────────────────────────────────────────────────────
