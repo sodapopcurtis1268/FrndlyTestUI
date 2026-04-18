@@ -35,30 +35,94 @@ public class DashboardPage extends BasePage {
     }
 
     /**
-     * Scrolls to the named home-page row, waits for Angular's intersection observer
-     * to render the cards, then JS-clicks the first card (bypasses display:none).
+     * Scrolls from top to bottom of the home page in small steps so Angular's
+     * intersection observer loads every row into the DOM before we search by name.
+     * Without this, rows below the fold don't exist in the DOM yet.
+     */
+    public void scrollPageToLoadAllRows() {
+        ((JavascriptExecutor) driver).executeScript("window.scrollTo(0, 0);");
+        try {
+            long pageHeight = (Long) ((JavascriptExecutor) driver)
+                    .executeScript("return document.body.scrollHeight");
+            for (long y = 0; y < pageHeight; y += 600) {
+                ((JavascriptExecutor) driver).executeScript("window.scrollTo(0, " + y + ")");
+                Thread.sleep(500);
+                // Page grows as new rows are added
+                pageHeight = (Long) ((JavascriptExecutor) driver)
+                        .executeScript("return document.body.scrollHeight");
+            }
+            // Scroll back to top so the first row is in view
+            ((JavascriptExecutor) driver).executeScript("window.scrollTo(0, 0);");
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Scrolls from the top of the page in 600 px steps (same cadence that triggers
+     * Angular's intersection observer in practice) until both the named row heading
+     * AND at least one card inside it appear in the DOM, then JS-clicks that card.
      *
-     * @return PlayerPage, or null if the row is not present / has no cards for this account.
+     * Scrolling past the section heading is required because Angular renders cards
+     * lazily only when the carousel enters the viewport — finding the heading node
+     * alone is not sufficient.
+     *
+     * @return PlayerPage, or null if the row/cards are not available for this account.
      */
     public PlayerPage clickFirstCardInRow(String rowName) {
-        List<WebElement> sections = driver.findElements(By.xpath(
-                "//h3[normalize-space(text())='" + rowName + "']"
-                + "/ancestor::div[contains(@class,'sec_slider')]"));
-        if (sections.isEmpty()) return null;
+        JavascriptExecutor js = (JavascriptExecutor) driver;
 
-        WebElement section = sections.get(0);
-        scrollIntoView(section);
+        // Always reset to the top so the intersection observer fires in order.
+        js.executeScript("window.scrollTo(0, 0);");
 
-        // Wait for Angular's intersection observer to render the carousel cards.
-        try { Thread.sleep(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        WebElement section = null;
+        long scrollY = 0;
 
-        WebElement card = (WebElement) ((JavascriptExecutor) driver).executeScript(
-                "return arguments[0].querySelector('.sheet_poster');", section);
-        if (card == null) return null;
+        try {
+            long pageHeight = (Long) js.executeScript("return document.body.scrollHeight");
 
-        jsClick(card);
-        try { Thread.sleep(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        return new PlayerPage(driver);
+            // Phase 1: scroll until the section heading appears in the DOM.
+            // Use JS textContent (same as DiagnosticTest) rather than XPath text()
+            // so that headings with nested elements still match.
+            while (section == null && scrollY <= pageHeight) {
+                scrollY += 600;
+                js.executeScript("window.scrollTo(0, " + scrollY + ")");
+                Thread.sleep(600);
+                pageHeight = (Long) js.executeScript("return document.body.scrollHeight");
+
+                section = (WebElement) js.executeScript(
+                        "var target = arguments[0];"
+                        + "var h3 = Array.from(document.querySelectorAll('h3.ott_tray_title'))"
+                        + "  .find(function(h){ return h.textContent.trim() === target; });"
+                        + "if (!h3) return null;"
+                        + "return h3.closest('.sec_slider');",
+                        rowName);
+            }
+
+            if (section == null) return null;
+
+            // Phase 2: scroll the section into the centre of the viewport so Angular's
+            // intersection observer fires and renders the cards, then poll for a card.
+            js.executeScript("arguments[0].scrollIntoView({block:'center'});", section);
+
+            WebElement card = null;
+            for (int i = 0; i < 6 && card == null; i++) {
+                Thread.sleep(1000);
+                card = (WebElement) js.executeScript(
+                        "return arguments[0].querySelector('.sheet_poster, .roller_poster');", section);
+            }
+
+            if (card == null) return null;
+
+            jsClick(card);
+            Thread.sleep(2000);
+            return new PlayerPage(driver);
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
     }
 
     public SettingsPage clickSettingsWheel() {

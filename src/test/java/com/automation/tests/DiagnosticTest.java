@@ -22,6 +22,37 @@ import java.util.List;
 public class DiagnosticTest extends BaseTest {
 
     @Test
+    public void captureAllRowNames() throws IOException, InterruptedException {
+        // Login
+        new HomePage(driver).clickLogin();
+        Thread.sleep(2000);
+        jsSet(driver.findElement(By.cssSelector("input[type='email']")),    ConfigReader.getUsername());
+        jsSet(driver.findElement(By.cssSelector("input[type='password']")), ConfigReader.getPassword());
+        driver.findElement(By.cssSelector("button[type='submit']")).click();
+        waitUrl("home", 30);
+
+        // Scroll to bottom slowly so Angular's intersection observer loads all rows
+        long pageHeight = (Long) js().executeScript("return document.body.scrollHeight");
+        long step = 600;
+        for (long y = 0; y < pageHeight; y += step) {
+            js().executeScript("window.scrollTo(0, " + y + ")");
+            Thread.sleep(600);
+            // Update page height in case new rows were appended
+            pageHeight = (Long) js().executeScript("return document.body.scrollHeight");
+        }
+        Thread.sleep(2000);
+
+        // Dump every row heading found
+        @SuppressWarnings("unchecked")
+        java.util.List<String> headings = (java.util.List<String>) js().executeScript(
+                "return Array.from(document.querySelectorAll('h3.ott_tray_title'))"
+                + "  .map(h => h.textContent.trim());");
+        System.out.println("=== Row headings found (" + headings.size() + ") ===");
+        headings.forEach(System.out::println);
+        save("all-rows.html");
+    }
+
+    @Test
     public void checkLoginFormFill() throws IOException, InterruptedException {
         // Reproduce FrndlyTVTest login() exactly, with diagnostics
         System.out.println("Starting URL: " + driver.getCurrentUrl());

@@ -5,9 +5,12 @@ import com.automation.config.ConfigReader;
 import com.automation.pages.DashboardPage;
 import com.automation.pages.HomePage;
 import com.automation.pages.PlayerPage;
+import org.openqa.selenium.support.ui.ExpectedConditions;
+import org.openqa.selenium.support.ui.WebDriverWait;
 import org.testng.annotations.Test;
 import org.testng.asserts.SoftAssert;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 
@@ -15,7 +18,7 @@ public class HomePageRowsTest extends BaseTest {
 
     private static final List<String> ROWS = Arrays.asList(
             "Live Now",
-            "Recommended for you",
+            "Recommended for You",
             "Blockbuster Boulevard",
             "New Episodes",
             "Just Added Movies",
@@ -57,13 +60,16 @@ public class HomePageRowsTest extends BaseTest {
 
                 String screenshotName = "row-" + rowName.replaceAll("[^a-zA-Z0-9]+", "-");
                 player.captureScreenshot(screenshotName);
-                dashboard = player.clickClose();
 
-                softAssert.assertTrue(
-                        driver.getCurrentUrl().contains("home"),
-                        "Row '" + rowName + "': expected /home after close, got: "
-                                + driver.getCurrentUrl()
-                );
+                // Navigate directly to /home instead of browser-back so Angular
+                // fully re-renders the home component with fresh intersection observers.
+                // browser-back can restore a bfcache snapshot where rows exist in the
+                // DOM but cards haven't loaded yet, causing subsequent rows to be skipped.
+                driver.navigate().to("https://watch.frndlytv.com/home");
+                new WebDriverWait(driver, Duration.ofSeconds(15))
+                        .until(ExpectedConditions.urlContains("home"));
+                Thread.sleep(2000);
+                dashboard = new DashboardPage(driver);
 
             } catch (Exception e) {
                 System.out.println("  FAIL: " + e.getMessage());
