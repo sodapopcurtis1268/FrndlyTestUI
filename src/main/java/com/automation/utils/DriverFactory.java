@@ -4,6 +4,7 @@ import com.automation.config.ConfigReader;
 import io.github.bonigarcia.wdm.WebDriverManager;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.openqa.selenium.MutableCapabilities;
 import org.openqa.selenium.PageLoadStrategy;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.chrome.ChromeDriver;
@@ -12,8 +13,12 @@ import org.openqa.selenium.edge.EdgeDriver;
 import org.openqa.selenium.edge.EdgeOptions;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.firefox.FirefoxOptions;
+import org.openqa.selenium.remote.RemoteWebDriver;
 
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.time.Duration;
+import java.util.HashMap;
 
 /**
  * Thread-safe factory that creates and manages one {@link WebDriver} instance per thread.
@@ -63,6 +68,11 @@ public class DriverFactory {
      * Downloads the matching driver binary via WebDriverManager if not already cached.
      */
     private static void initDriver() {
+        if (ConfigReader.isLtEnabled()) {
+            initRemoteDriver();
+            return;
+        }
+
         String browser = ConfigReader.getBrowser().toLowerCase();
         boolean headless = ConfigReader.isHeadless();
         log.info("Initialising {} driver (headless={})", browser, headless);
@@ -105,6 +115,56 @@ public class DriverFactory {
         webDriver.manage().window().maximize();
         driver.set(webDriver);
         log.info("{} driver ready", browser);
+    }
+
+    /**
+     * Initialises a {@link RemoteWebDriver} connected to LambdaTest's Selenium Grid.
+     *
+     * <p>Reads {@code lt.username}, {@code lt.accesskey}, {@code lt.browser.version},
+     * {@code lt.platform}, and {@code lt.build} from {@link ConfigReader}. The browser
+     * type is still taken from the standard {@code browser} config key so the same key
+     * controls both local and remote runs.
+     *
+     * <p>Uses W3C capability format via the {@code LT:Options} extension capability.
+     * Page load timeout is raised to 60 s to account for remote session network latency.
+     */
+    private static void initRemoteDriver() {
+        String browser = ConfigReader.getBrowser().toLowerCase();
+        log.info("Initialising LambdaTest remote driver — browser={}, platform={}",
+                browser, ConfigReader.getLtPlatform());
+
+        HashMap<String, Object> ltOptions = new HashMap<>();
+        ltOptions.put("username",       ConfigReader.getLtUsername());
+        ltOptions.put("accessKey",      ConfigReader.getLtAccessKey());
+        ltOptions.put("browserVersion", ConfigReader.getLtBrowserVersion());
+        ltOptions.put("platformName",   ConfigReader.getLtPlatform());
+        ltOptions.put("build",          ConfigReader.getLtBuild());
+        ltOptions.put("name",           "Frndly TV — " + browser);
+        ltOptions.put("w3c",            true);
+        ltOptions.put("plugin",         "java-testng");
+
+        MutableCapabilities browserCaps = switch (browser) {
+            case "firefox" -> new FirefoxOptions();
+            case "edge"    -> new EdgeOptions();
+            default        -> {
+                ChromeOptions c = new ChromeOptions();
+                c.setPageLoadStrategy(PageLoadStrategy.EAGER);
+                yield c;
+            }
+        };
+        browserCaps.setCapability("LT:Options", ltOptions);
+
+        try {
+            WebDriver webDriver = new RemoteWebDriver(
+                    new URL("https://hub.lambdatest.com/wd/hub"), browserCaps);
+            webDriver.manage().timeouts().implicitlyWait(Duration.ofSeconds(ConfigReader.getImplicitWait()));
+            webDriver.manage().timeouts().pageLoadTimeout(Duration.ofSeconds(60));
+            webDriver.manage().window().maximize();
+            driver.set(webDriver);
+            log.info("LambdaTest remote driver ready ({})", browser);
+        } catch (MalformedURLException e) {
+            throw new RuntimeException("Invalid LambdaTest hub URL", e);
+        }
     }
 
     /**

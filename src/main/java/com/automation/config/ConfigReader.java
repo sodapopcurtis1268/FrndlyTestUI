@@ -16,6 +16,9 @@ import java.util.Properties;
  */
 public class ConfigReader {
 
+    /** Utility class — do not instantiate. */
+    private ConfigReader() {}
+
     private static Properties properties;
     private static final String CONFIG_PATH = "src/main/resources/config.properties";
 
@@ -39,6 +42,21 @@ public class ConfigReader {
         String value = properties.getProperty(key);
         if (value == null) throw new RuntimeException("Property not found: " + key);
         return value;
+    }
+
+    /**
+     * Returns the value for {@code key}, checking {@link System#getProperty} first
+     * (allows {@code -Dkey=value} CLI overrides), then config.properties, then
+     * {@code defaultValue} if absent from both.
+     *
+     * @param key          the property name
+     * @param defaultValue fallback when the key is absent
+     * @return resolved value
+     */
+    private static String getOptional(String key, String defaultValue) {
+        String sysProp = System.getProperty(key);
+        if (sysProp != null) return sysProp;
+        return properties.getProperty(key, defaultValue);
     }
 
     /**
@@ -103,5 +121,67 @@ public class ConfigReader {
      */
     public static String getPassword() {
         return get("password");
+    }
+
+    // ── LambdaTest ────────────────────────────────────────────────────────────
+
+    /**
+     * Returns whether LambdaTest remote execution is enabled.
+     * Checks the {@code lt.enabled} system property first, then config.properties.
+     *
+     * @return {@code true} if tests should run on LambdaTest's Selenium Grid
+     */
+    public static boolean isLtEnabled() {
+        String sysProp = System.getProperty("lt.enabled");
+        if (sysProp != null) return Boolean.parseBoolean(sysProp);
+        return Boolean.parseBoolean(properties.getProperty("lt.enabled", "false"));
+    }
+
+    /**
+     * Returns the LambdaTest account username.
+     *
+     * @return LambdaTest username string
+     */
+    public static String getLtUsername() {
+        return get("lt.username");
+    }
+
+    /**
+     * Returns the LambdaTest account access key.
+     *
+     * @return LambdaTest access key string
+     */
+    public static String getLtAccessKey() {
+        return get("lt.accesskey");
+    }
+
+    /**
+     * Returns the browser version to request from the LambdaTest grid.
+     * Defaults to {@code "latest"} if not set.
+     *
+     * @return browser version string (e.g. {@code "latest"}, {@code "120.0"})
+     */
+    public static String getLtBrowserVersion() {
+        return getOptional("lt.browser.version", "latest");
+    }
+
+    /**
+     * Returns the OS platform to request from the LambdaTest grid.
+     * Defaults to {@code "Windows 10"} if not set.
+     *
+     * @return platform name (e.g. {@code "Windows 10"}, {@code "macOS Ventura"})
+     */
+    public static String getLtPlatform() {
+        return getOptional("lt.platform", "Windows 10");
+    }
+
+    /**
+     * Returns the LambdaTest build name used to group test sessions on the dashboard.
+     * Defaults to {@code "Automation"} if not set.
+     *
+     * @return build name string
+     */
+    public static String getLtBuild() {
+        return getOptional("lt.build", "Automation");
     }
 }

@@ -14,3 +14,16 @@ headless=false
 # Test credentials — copy this file to config.properties and fill in your values
 username=your_email@example.com
 password=your_password
+
+# ── LambdaTest ────────────────────────────────────────────────────────────────
+# Set lt.enabled=true (or -Dlt.enabled=true) to run on LambdaTest's Selenium Grid
+# instead of a local browser. Get username/accesskey from:
+#   https://accounts.lambdatest.com/detail/profile
+lt.enabled=false
+lt.username=YOUR_LT_USERNAME
+lt.accesskey=YOUR_LT_ACCESS_KEY
+
+# Browser version and OS to request from the grid (ignored when lt.enabled=false)
+lt.browser.version=latest
+lt.platform=Windows 10
+lt.build=Frndly TV Automation
