@@ -5,6 +5,8 @@ import com.automation.config.ConfigReader;
 import com.automation.pages.DashboardPage;
 import com.automation.pages.HomePage;
 import com.automation.pages.PlayerPage;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 import org.testng.annotations.Test;
@@ -41,6 +43,8 @@ import java.util.List;
  * as SKIP rather than a failure.
  */
 public class HomePageRowsTest extends BaseTest {
+
+    private static final Logger log = LogManager.getLogger(HomePageRowsTest.class);
 
     /**
      * The 20 home-page row names to test, in the order they typically appear on the page.
@@ -97,12 +101,12 @@ public class HomePageRowsTest extends BaseTest {
         SoftAssert softAssert = new SoftAssert();
 
         for (String rowName : ROWS) {
-            System.out.println("Testing row: " + rowName);
+            log.info("Testing row: {}", rowName);
             try {
                 PlayerPage player = dashboard.clickFirstCardInRow(rowName);
 
                 if (player == null) {
-                    System.out.println("  SKIP: row not found or has no cards");
+                    log.warn("SKIP: row '{}' not found or has no cards", rowName);
                     continue;
                 }
 
@@ -120,7 +124,7 @@ public class HomePageRowsTest extends BaseTest {
                 dashboard = new DashboardPage(driver);
 
             } catch (Exception e) {
-                System.out.println("  FAIL: " + e.getMessage());
+                log.error("Row '{}' FAILED: {}", rowName, e.getMessage(), e);
                 softAssert.fail("Row '" + rowName + "' threw: " + e.getMessage());
 
                 // Recover so remaining rows can still run

@@ -1,5 +1,7 @@
 package com.automation.pages;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
@@ -30,6 +32,8 @@ import org.openqa.selenium.support.FindBy;
  * </ul>
  */
 public class DashboardPage extends BasePage {
+
+    private static final Logger log = LogManager.getLogger(DashboardPage.class);
 
     /**
      * First card ({@code div.sheet_poster}) in the "Continue Watching" tray.
@@ -130,6 +134,7 @@ public class DashboardPage extends BasePage {
                 loadWait++;
                 pageHeight = (Long) js.executeScript("return document.body.scrollHeight");
             }
+            log.debug("findRowSection('{}') — pageHeight={}px after {}s content-ready wait", rowName, pageHeight, loadWait);
 
             while (section == null && scrollY <= pageHeight) {
                 scrollY += 600;
@@ -146,6 +151,11 @@ public class DashboardPage extends BasePage {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+        if (section != null) {
+            log.info("Row found: '{}'", rowName);
+        } else {
+            log.warn("Row not found on page: '{}'", rowName);
         }
         return section;
     }

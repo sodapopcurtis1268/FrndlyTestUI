@@ -5,6 +5,8 @@ import com.automation.pages.DashboardPage;
 import com.automation.pages.HomePage;
 import com.automation.pages.PlayerPage;
 import com.automation.utils.DriverFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.support.ui.WebDriverWait;
@@ -60,6 +62,7 @@ import java.util.Optional;
  */
 public class AssetPlaybackTest {
 
+    private static final Logger log = LogManager.getLogger(AssetPlaybackTest.class);
     private static final String HOME_URL  = "https://watch.frndlytv.com/home";
     private static final SimpleDateFormat TS = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
 
@@ -164,7 +167,7 @@ public class AssetPlaybackTest {
      */
     @Test(dataProvider = "rows")
     public void testRowAssets(String rowName) {
-        System.out.println("\n=== Row: " + rowName + " ===");
+        log.info("=== Row: {} ===", rowName);
 
         // Navigate to /home and get card count for this row
         navigateHome();
@@ -172,10 +175,10 @@ public class AssetPlaybackTest {
         int cardCount = dashboard.getCardCountInRow(rowName);
 
         if (cardCount == 0) {
-            System.out.println("  SKIP: row not found or has no cards");
+            log.warn("SKIP: row '{}' not found or has no cards", rowName);
             return;
         }
-        System.out.println("  Cards found: " + cardCount);
+        log.info("Row '{}' — {} cards found", rowName, cardCount);
 
         List<Integer> indices = getTestIndices(cardCount);
         SoftAssert softAssert = new SoftAssert();
@@ -208,7 +211,7 @@ public class AssetPlaybackTest {
         PlayerPage player = dashboard.clickCardAtIndexInRow(rowName, index);
 
         if (player == null) {
-            System.out.printf("  [card %d] SKIP: card not found%n", index);
+            log.warn("Row '{}' card {} — not found, skipping", rowName, index);
             softAssert.fail("Row '" + rowName + "' card[" + index + "]: not found after scrolling");
             return;
         }
@@ -227,8 +230,7 @@ public class AssetPlaybackTest {
         // Validate screenshot was saved and is non-empty
         validateScreenshot(screenshotName, softAssert);
 
-        System.out.printf("  [card %d] started: %s | screenshot: %s%n",
-                index, startTimeFormatted, screenshotName);
+        log.info("Row '{}' card {} — started: {} | screenshot: {}", rowName, index, startTimeFormatted, screenshotName);
     }
 
     /**
@@ -327,11 +329,11 @@ public class AssetPlaybackTest {
                 // Still at /home — Angular is bootstrapping slowly (e.g. after a live
                 // stream). findRowSection has its own polling loop and will wait for
                 // content while scrolling, so just proceed.
-                System.out.println("  [info] Home page loading slowly, proceeding to scroll");
+                log.info("Home page loading slowly after playback, proceeding");
             } else {
                 // Redirected to /authenticator — session actually expired. Navigate to
                 // the marketing landing page first so clickLogin() can find the button.
-                System.out.println("  [warn] Session expired (url=" + currentUrl + "), re-logging in");
+                log.warn("Session expired (url={}), re-logging in", currentUrl);
                 driver.get(ConfigReader.getBaseUrl());
                 dashboard = new HomePage(driver)
                         .clickLogin()

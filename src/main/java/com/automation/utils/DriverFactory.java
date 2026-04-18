@@ -2,6 +2,8 @@ package com.automation.utils;
 
 import com.automation.config.ConfigReader;
 import io.github.bonigarcia.wdm.WebDriverManager;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.openqa.selenium.PageLoadStrategy;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.chrome.ChromeDriver;
@@ -38,6 +40,10 @@ import java.time.Duration;
  */
 public class DriverFactory {
 
+    /** Utility class — do not instantiate. */
+    private DriverFactory() {}
+
+    private static final Logger log = LogManager.getLogger(DriverFactory.class);
     private static final ThreadLocal<WebDriver> driver = new ThreadLocal<>();
 
     /**
@@ -59,6 +65,7 @@ public class DriverFactory {
     private static void initDriver() {
         String browser = ConfigReader.getBrowser().toLowerCase();
         boolean headless = ConfigReader.isHeadless();
+        log.info("Initialising {} driver (headless={})", browser, headless);
         WebDriver webDriver;
 
         switch (browser) {
@@ -97,6 +104,7 @@ public class DriverFactory {
         webDriver.manage().timeouts().pageLoadTimeout(Duration.ofSeconds(30));
         webDriver.manage().window().maximize();
         driver.set(webDriver);
+        log.info("{} driver ready", browser);
     }
 
     /**
@@ -105,6 +113,7 @@ public class DriverFactory {
      */
     public static void quitDriver() {
         if (driver.get() != null) {
+            log.info("Quitting WebDriver for thread {}", Thread.currentThread().getName());
             driver.get().quit();
             driver.remove();
         }

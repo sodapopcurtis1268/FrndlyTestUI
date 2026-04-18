@@ -1,6 +1,8 @@
 package com.automation.pages;
 
 import com.automation.utils.WaitUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.OutputType;
 import org.openqa.selenium.TakesScreenshot;
@@ -29,6 +31,8 @@ import java.time.Duration;
  * {@link WaitUtils} is initialised.
  */
 public abstract class BasePage {
+
+    private static final Logger log = LogManager.getLogger(BasePage.class);
 
     /** The active WebDriver session shared with all helper methods and subclasses. */
     protected WebDriver driver;
@@ -196,9 +200,9 @@ public abstract class BasePage {
             Path dest = Path.of("screenshots", name + "-" + System.currentTimeMillis() + ".png");
             Files.createDirectories(dest.getParent());
             Files.copy(src.toPath(), dest);
-            System.out.println("Screenshot saved: " + dest.toAbsolutePath());
+            log.info("Screenshot saved: {}", dest.toAbsolutePath());
         } catch (IOException e) {
-            System.err.println("Failed to save screenshot: " + e.getMessage());
+            log.error("Failed to save screenshot: {}", e.getMessage(), e);
         }
     }
 }

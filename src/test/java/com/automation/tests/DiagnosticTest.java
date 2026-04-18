@@ -3,6 +3,8 @@ package com.automation.tests;
 import com.automation.base.BaseTest;
 import com.automation.config.ConfigReader;
 import com.automation.pages.HomePage;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.OutputType;
@@ -20,6 +22,8 @@ import java.time.Duration;
 import java.util.List;
 
 public class DiagnosticTest extends BaseTest {
+
+    private static final Logger log = LogManager.getLogger(DiagnosticTest.class);
 
     @Test
     public void captureAllRowNames() throws IOException, InterruptedException {
@@ -47,18 +51,18 @@ public class DiagnosticTest extends BaseTest {
         java.util.List<String> headings = (java.util.List<String>) js().executeScript(
                 "return Array.from(document.querySelectorAll('h3.ott_tray_title'))"
                 + "  .map(h => h.textContent.trim());");
-        System.out.println("=== Row headings found (" + headings.size() + ") ===");
-        headings.forEach(System.out::println);
+        log.info("=== Row headings found ({}) ===", headings.size());
+        headings.forEach(h -> log.info("  heading: {}", h));
         save("all-rows.html");
     }
 
     @Test
     public void checkLoginFormFill() throws IOException, InterruptedException {
         // Reproduce FrndlyTVTest login() exactly, with diagnostics
-        System.out.println("Starting URL: " + driver.getCurrentUrl());
+        log.info("Starting URL: {}", driver.getCurrentUrl());
 
         new HomePage(driver).clickLogin();
-        System.out.println("After clickLogin URL: " + driver.getCurrentUrl());
+        log.info("After clickLogin URL: {}", driver.getCurrentUrl());
 
         // Wait for email field to be visible (same as FrndlyLoginPage)
         WebElement email    = driver.findElement(By.cssSelector("input[type='email']"));
@@ -72,23 +76,23 @@ public class DiagnosticTest extends BaseTest {
             String cls = driver.findElement(By.cssSelector("input[type='email']")).getAttribute("class");
             return cls != null && cls.contains("ng-");
         }, 15);
-        System.out.println("ng- class appeared after " + (System.currentTimeMillis() - start) + "ms");
-        System.out.println("email classes: " + email.getAttribute("class"));
+        log.debug("ng- class appeared after {}ms", System.currentTimeMillis() - start);
+        log.debug("email classes: {}", email.getAttribute("class"));
 
-        System.out.println("submit disabled before fill: " + submit.getAttribute("disabled"));
+        log.debug("submit disabled before fill: {}", submit.getAttribute("disabled"));
         // Use typeAngular-equivalent JS (same as BasePage.typeAngular)
         jsSet(email, ConfigReader.getUsername());
         jsSet(password, ConfigReader.getPassword());
 
-        System.out.println("email value after jsSet: "    + email.getAttribute("value"));
-        System.out.println("password value after jsSet: " + password.getAttribute("value"));
-        System.out.println("submit disabled after fill: "  + submit.getAttribute("disabled"));
+        log.debug("email value after jsSet: {}", email.getAttribute("value"));
+        log.debug("password value after jsSet: {}", password.getAttribute("value"));
+        log.debug("submit disabled after fill: {}", submit.getAttribute("disabled"));
         screenshot("B-form-filled");
 
         // Click submit (fresh lookup, same as FrndlyLoginPage)
         driver.findElement(By.cssSelector("button[type='submit']")).click();
         Thread.sleep(5000);
-        System.out.println("URL after submit click: " + driver.getCurrentUrl());
+        log.info("URL after submit click: {}", driver.getCurrentUrl());
         screenshot("C-after-submit");
     }
 
@@ -111,7 +115,7 @@ public class DiagnosticTest extends BaseTest {
         jsSet(driver.findElement(By.cssSelector("input[type='password']")), ConfigReader.getPassword());
         driver.findElement(By.cssSelector("button[type='submit']")).click();
         waitUrl("home", 30);
-        System.out.println("Logged in. URL: " + driver.getCurrentUrl());
+        log.info("Logged in. URL: {}", driver.getCurrentUrl());
 
         // ── Scroll to Continue Watching and wait for cards to render ─────────────
         WebElement cwHeading = driver.findElement(
@@ -128,13 +132,13 @@ public class DiagnosticTest extends BaseTest {
                 + "  .filter(function(el){ return el.offsetParent !== null; })"
                 + "  .slice(0,5)"
                 + "  .map(function(el){ return el.id + '|' + el.className; });");
-        System.out.println("Visible sheet_poster elements: " + visibleIds);
+        log.debug("Visible sheet_poster elements: {}", visibleIds);
 
         // Also count total vs visible
         Long total   = (Long) js().executeScript("return document.querySelectorAll('.sheet_poster').length;");
         Long visible = (Long) js().executeScript(
                 "return Array.from(document.querySelectorAll('.sheet_poster')).filter(e=>e.offsetParent!==null).length;");
-        System.out.println("Total sheet_poster: " + total + ", visible: " + visible);
+        log.debug("Total sheet_poster: {}, visible: {}", total, visible);
 
         // Find the first visible one in the Continue Watching tray
         WebElement firstVisible = (WebElement) js().executeScript(
@@ -145,7 +149,7 @@ public class DiagnosticTest extends BaseTest {
                 + "if(!tray) return null;"
                 + "var posters = Array.from(tray.querySelectorAll('.sheet_poster'));"
                 + "return posters.find(function(p){ return p.offsetParent!==null; }) || posters[0];");
-        System.out.println("First CW poster (visible or first): " + (firstVisible != null ? firstVisible.getAttribute("id") : "null"));
+        log.debug("First CW poster (visible or first): {}", firstVisible != null ? firstVisible.getAttribute("id") : "null");
 
         if (firstVisible != null) {
             js().executeScript("arguments[0].scrollIntoView({block:'center'});", firstVisible);
@@ -153,7 +157,7 @@ public class DiagnosticTest extends BaseTest {
             // Click using JS (bypasses display:none)
             js().executeScript("arguments[0].click();", firstVisible);
             Thread.sleep(5000);
-            System.out.println("After click URL: " + driver.getCurrentUrl());
+            log.info("After click URL: {}", driver.getCurrentUrl());
             screenshot("H-after-click");
             save("H-after-click.html");
 
@@ -164,7 +168,7 @@ public class DiagnosticTest extends BaseTest {
             probe("jwplayer",        By.cssSelector(".jwplayer,.jw-wrapper"));
 
             // What changed in the URL?
-            System.out.println("Final URL: " + driver.getCurrentUrl());
+            log.info("Final URL: {}", driver.getCurrentUrl());
         }
     }
 
@@ -186,9 +190,9 @@ public class DiagnosticTest extends BaseTest {
 
     private void probe(String label, By by) {
         List<WebElement> els = driver.findElements(by);
-        System.out.printf("%-25s → %d found%n", label, els.size());
+        log.debug("{} → {} found", label, els.size());
         if (!els.isEmpty())
-            System.out.printf("   class=%s%n", trim(els.get(0).getAttribute("class"), 80));
+            log.debug("   class={}", trim(els.get(0).getAttribute("class"), 80));
     }
 
     private void screenshot(String name) throws IOException {
@@ -196,12 +200,12 @@ public class DiagnosticTest extends BaseTest {
         Path dest = Path.of("screenshots", name + ".png");
         Files.createDirectories(dest.getParent());
         Files.copy(src.toPath(), dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        System.out.println("Screenshot: " + dest.toAbsolutePath());
+        log.info("Screenshot: {}", dest.toAbsolutePath());
     }
 
     private void save(String name) throws IOException {
         Files.writeString(Path.of("screenshots", name), driver.getPageSource());
-        System.out.println("Saved: screenshots/" + name);
+        log.info("Saved: screenshots/{}", name);
     }
 
     private String trim(String s, int max) {
