@@ -1,0 +1,16 @@
+# Browser: chrome | firefox | edge
+browser=chrome
+
+# Base URL of the application under test
+base.url=https://try.frndlytv.com
+
+# Timeouts (seconds)
+implicit.wait=10
+explicit.wait=20
+
+# Run in headless mode: true | false
+headless=false
+
+# Test credentials — copy this file to config.properties and fill in your values
+username=your_email@example.com
+password=your_password

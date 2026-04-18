@@ -1,0 +1,29 @@
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+release.properties
+
+# IDE
+.idea/
+*.iml
+.eclipse/
+.settings/
+.project
+.classpath
+
+# Test artifacts
+screenshots/
+*.dump
+*.dumpstream
+
+# Credentials — never commit real values
+src/main/resources/config.properties
+
+# Claude Code local settings
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
