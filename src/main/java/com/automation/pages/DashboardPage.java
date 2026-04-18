@@ -31,7 +31,7 @@ import org.openqa.selenium.support.FindBy;
  *   <li>{@code .roller_poster} — horizontal roller rows (e.g. Recommended for You)</li>
  * </ul>
  */
-public class DashboardPage extends BasePage {
+public class  DashboardPage extends BasePage {
 
     private static final Logger log = LogManager.getLogger(DashboardPage.class);
 
