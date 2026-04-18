@@ -1,5 +1,8 @@
 package com.automation.pages;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
 
 /**
@@ -14,11 +17,24 @@ import org.openqa.selenium.WebDriver;
  * </ul>
  *
  * <p>Because the URL may or may not change, this page object does not assert on the URL
- * in its constructor. Instead it provides a {@link #captureScreenshot(String)} method
- * that waits briefly and captures whatever is visible, and a {@link #clickClose()} method
- * that navigates back via browser history.
+ * in its constructor. Instead it records the construction timestamp (≈ card click time)
+ * and exposes {@link #waitForVideoToStart(int)} to measure the time-to-first-frame (TTFF)
+ * — the elapsed milliseconds from click to when the native {@code <video>} element begins
+ * advancing its {@code currentTime}.
+ *
+ * <p>Frndly TV uses JWPlayer, which renders a native {@code <video>} element directly in
+ * the document (no shadow DOM, no cross-origin iframe). The JS playback-detection queries
+ * target this element.
  */
 public class PlayerPage extends BasePage {
+
+    private static final Logger log = LogManager.getLogger(PlayerPage.class);
+
+    /**
+     * Epoch-millisecond timestamp captured at construction, which occurs immediately
+     * after the card click. Used as the start time for TTFF calculations.
+     */
+    private final long constructedAtMs = System.currentTimeMillis();
 
     /**
      * Constructs the page object. No element initialisation is needed as the player
@@ -29,6 +45,88 @@ public class PlayerPage extends BasePage {
     public PlayerPage(WebDriver driver) {
         super(driver);
     }
+
+    // ── Playback detection ────────────────────────────────────────────────────
+
+    /**
+     * Polls every 500 ms until the native {@code <video>} element reports that
+     * playback has started ({@code readyState >= 3} and {@code currentTime > 0}),
+     * or until {@code timeoutSeconds} elapses.
+     *
+     * <p>The returned value is the elapsed milliseconds from object construction
+     * (≈ card click) to the moment playback was detected — i.e., the
+     * <b>time-to-first-frame (TTFF)</b>.
+     *
+     * @param timeoutSeconds how long to wait before giving up
+     * @return TTFF in milliseconds, or {@code -1} if the video did not start in time
+     */
+    public long waitForVideoToStart(int timeoutSeconds) {
+        log.info("Waiting up to {}s for video playback to begin", timeoutSeconds);
+        JavascriptExecutor js = (JavascriptExecutor) driver;
+        long deadline = System.currentTimeMillis() + (timeoutSeconds * 1000L);
+
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                // readyState >= 3 (HAVE_FUTURE_DATA) + currentTime > 0 means frames are arriving
+                Object result = js.executeScript(
+                        "var v = document.querySelector('video');"
+                        + "if (!v) return 0;"
+                        + "return (v.readyState >= 3 && v.currentTime > 0) ? 1 : 0;");
+
+                if (result instanceof Long && (Long) result == 1L) {
+                    long ttff = System.currentTimeMillis() - constructedAtMs;
+                    log.info("Video playback detected — TTFF: {}ms", ttff);
+                    return ttff;
+                }
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return -1;
+            } catch (Exception e) {
+                log.debug("JS poll error (retrying): {}", e.getMessage());
+            }
+        }
+
+        log.warn("Video did not start within {}s", timeoutSeconds);
+        return -1;
+    }
+
+    /**
+     * Returns whether the native {@code <video>} element is currently playing
+     * (not paused, not ended, and {@code currentTime > 0}).
+     *
+     * @return {@code true} if playback is active
+     */
+    public boolean isVideoPlaying() {
+        try {
+            Object result = ((JavascriptExecutor) driver).executeScript(
+                    "var v = document.querySelector('video');"
+                    + "return v != null && !v.paused && !v.ended && v.currentTime > 0;");
+            return Boolean.TRUE.equals(result);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Returns the current {@code currentTime} of the native {@code <video>} element
+     * in seconds, or {@code -1.0} if no video element is found.
+     *
+     * @return video position in seconds
+     */
+    public double getVideoCurrentTime() {
+        try {
+            Object result = ((JavascriptExecutor) driver).executeScript(
+                    "var v = document.querySelector('video'); return v ? v.currentTime : -1;");
+            if (result instanceof Double) return (Double) result;
+            if (result instanceof Long)   return ((Long) result).doubleValue();
+            return -1.0;
+        } catch (Exception e) {
+            return -1.0;
+        }
+    }
+
+    // ── Screenshot / close ────────────────────────────────────────────────────
 
     /**
      * Waits 3 seconds for the player or content overlay to render, then saves a

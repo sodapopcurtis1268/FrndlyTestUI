@@ -142,6 +142,9 @@ public class DriverFactory {
         ltOptions.put("name",           "Frndly TV — " + browser);
         ltOptions.put("w3c",            true);
         ltOptions.put("plugin",         "java-testng");
+        ltOptions.put("video",          true);   // record full session video
+        ltOptions.put("network",        true);   // capture network logs
+        ltOptions.put("console",        true);   // capture browser console logs
 
         MutableCapabilities browserCaps = switch (browser) {
             case "firefox" -> new FirefoxOptions();

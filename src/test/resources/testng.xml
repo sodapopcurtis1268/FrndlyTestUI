@@ -26,4 +26,10 @@
         </classes>
     </test>
 
+    <test name="Trending Movies Playback">
+        <classes>
+            <class name="com.automation.tests.TrendingMoviesPlaybackTest"/>
+        </classes>
+    </test>
+
 </suite>
