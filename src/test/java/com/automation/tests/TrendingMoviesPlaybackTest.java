@@ -13,6 +13,8 @@ import org.testng.annotations.Test;
 
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Picks a random content row on the Frndly TV dashboard and measures the
@@ -64,6 +66,27 @@ public class TrendingMoviesPlaybackTest extends BaseTest {
 
     private static final Random RANDOM = new Random();
 
+    /**
+     * Rows whose cards do not lead to playable video content and should therefore
+     * be excluded from random selection.
+     * <ul>
+     *   <li>"Browse By Genre" — genre navigation tiles, not video cards</li>
+     *   <li>"Coming Soon - Set Your DVR" — scheduling UI, not playable</li>
+     *   <li>"Featured Channels" — channel browse, not direct playback</li>
+     *   <li>"Add-Ons" — subscription management cards</li>
+     *   <li>"My Recordings" — DVR content, account/subscription dependent</li>
+     *   <li>"My Favorites" — may be empty for test accounts</li>
+     * </ul>
+     */
+    private static final Set<String> NON_CONTENT_ROWS = Set.of(
+            "Browse By Genre",
+            "Coming Soon - Set Your DVR",
+            "Featured Channels",
+            "Add-Ons",
+            "My Recordings",
+            "My Favorites"
+    );
+
     // ── Test ──────────────────────────────────────────────────────────────────
 
     /**
@@ -87,12 +110,16 @@ public class TrendingMoviesPlaybackTest extends BaseTest {
                 .clickLogin()
                 .login(ConfigReader.getUsername(), ConfigReader.getPassword());
 
-        // ── Step 2: Collect all row names ─────────────────────────────────────
+        // ── Step 2: Collect all row names, filter non-content rows ───────────
         log.info("Step 2: Scrolling dashboard to load all rows");
-        List<String> rowNames = dashboard.getRowNames();
+        List<String> allRows = dashboard.getRowNames();
+        List<String> rowNames = allRows.stream()
+                .filter(r -> !NON_CONTENT_ROWS.contains(r))
+                .collect(Collectors.toList());
 
+        log.info("Eligible rows for random selection ({}): {}", rowNames.size(), rowNames);
         Assert.assertFalse(rowNames.isEmpty(),
-                "No content rows found on the dashboard — check login or page load");
+                "No eligible content rows found on the dashboard — check login or page load");
 
         // ── Step 3: Pick a random row ─────────────────────────────────────────
         String selectedRow = rowNames.get(RANDOM.nextInt(rowNames.size()));

@@ -64,6 +64,7 @@ public class PlayerPage extends BasePage {
         log.info("Waiting up to {}s for video playback to begin", timeoutSeconds);
         JavascriptExecutor js = (JavascriptExecutor) driver;
         long deadline = System.currentTimeMillis() + (timeoutSeconds * 1000L);
+        boolean playClickAttempted = false;
 
         while (System.currentTimeMillis() < deadline) {
             try {
@@ -78,6 +79,14 @@ public class PlayerPage extends BasePage {
                     log.info("Video playback detected — TTFF: {}ms", ttff);
                     return ttff;
                 }
+
+                // After 5 s with no video: we likely landed on a detail/info page that
+                // requires a second tap on a Watch/Play button before playback begins.
+                if (!playClickAttempted && (System.currentTimeMillis() - constructedAtMs) > 5000) {
+                    playClickAttempted = true;
+                    tryClickDetailPagePlayButton(js);
+                }
+
                 Thread.sleep(500);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -89,6 +98,45 @@ public class PlayerPage extends BasePage {
 
         log.warn("Video did not start within {}s", timeoutSeconds);
         return -1;
+    }
+
+    /**
+     * Attempts to click a "Watch Now" / "Play" CTA on a content detail page.
+     * Called automatically by {@link #waitForVideoToStart} when no video element
+     * appears within 5 seconds of the card click — indicating the card navigated to
+     * a detail/info page rather than starting playback directly.
+     *
+     * <p>The JS is a no-op if no matching button is found, so this is safe to call
+     * unconditionally.
+     */
+    private void tryClickDetailPagePlayButton(JavascriptExecutor js) {
+        try {
+            Object found = js.executeScript(
+                    "var selectors = ["
+                    + "  'button[class*=\"watch\"]',"
+                    + "  'button[class*=\"play\"]',"
+                    + "  'a[class*=\"watch\"]',"
+                    + "  '[class*=\"watch-now\"]',"
+                    + "  '[class*=\"play-now\"]',"
+                    + "  '[class*=\"cta\"][class*=\"watch\"]',"
+                    + "  'button[aria-label*=\"watch\" i]',"
+                    + "  'button[aria-label*=\"play\" i]',"
+                    + "  '[class*=\"ott-play\"]',"
+                    + "  '[class*=\"play-btn\"]'"
+                    + "];"
+                    + "for (var i = 0; i < selectors.length; i++) {"
+                    + "  var el = document.querySelector(selectors[i]);"
+                    + "  if (el && el.offsetParent !== null) { el.click(); return selectors[i]; }"
+                    + "}"
+                    + "return null;");
+            if (found != null) {
+                log.info("Detail page detected — clicked play button matching: {}", found);
+            } else {
+                log.debug("Detail page play button not found — continuing to poll for video");
+            }
+        } catch (Exception e) {
+            log.debug("Error attempting detail page play click: {}", e.getMessage());
+        }
     }
 
     /**
