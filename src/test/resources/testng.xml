@@ -14,4 +14,10 @@
         </classes>
     </test>
 
+    <test name="Home Page Rows">
+        <classes>
+            <class name="com.automation.tests.HomePageRowsTest"/>
+        </classes>
+    </test>
+
 </suite>

@@ -13,13 +13,17 @@ public class PlayerPage extends BasePage {
      * The Continue Watching player may be an inline overlay or a new page —
      * we capture whatever is currently visible.
      */
-    public void captureScreenshot() {
+    public void captureScreenshot(String name) {
         try {
             Thread.sleep(3000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        takeScreenshot("player-page");
+        takeScreenshot(name);
+    }
+
+    public void captureScreenshot() {
+        captureScreenshot("player-page");
     }
 
     /**
