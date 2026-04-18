@@ -20,4 +20,10 @@
         </classes>
     </test>
 
+    <test name="Asset Playback">
+        <classes>
+            <class name="com.automation.tests.AssetPlaybackTest"/>
+        </classes>
+    </test>
+
 </suite>

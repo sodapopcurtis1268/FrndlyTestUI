@@ -1,12 +1,9 @@
 package com.automation.pages;
 
-import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.support.FindBy;
-
-import java.util.List;
 
 /**
  * Page Object for the Frndly TV home / dashboard page ({@code watch.frndlytv.com/home}).
@@ -25,6 +22,12 @@ import java.util.List;
  * applied by the slider library. Regular {@code WebElement.click()} is blocked by the
  * visibility restriction; {@link #jsClick(WebElement)} dispatches a {@code MouseEvent}
  * that still reaches Angular's {@code (click)} listener.
+ *
+ * <p>Two card CSS classes are used depending on the row type:
+ * <ul>
+ *   <li>{@code .sheet_poster} — standard grid-style rows (e.g. Live Now, Frndly Featured)</li>
+ *   <li>{@code .roller_poster} — horizontal roller rows (e.g. Recommended for You)</li>
+ * </ul>
  */
 public class DashboardPage extends BasePage {
 
@@ -95,53 +98,44 @@ public class DashboardPage extends BasePage {
         }
     }
 
+    // ── Row-scanning helpers ──────────────────────────────────────────────────────
+
     /**
-     * Scrolls the home page until the named content row is visible, then clicks its
-     * first card and returns the resulting player page.
+     * Scrolls the page from the top in 600 px steps until the {@code sec_slider}
+     * container for the named row heading appears in the DOM, then returns it.
      *
-     * <h3>Algorithm</h3>
-     * <p><b>Phase 1 — find the section:</b> Starting from the top, the page is scrolled
-     * in 600 px steps with a 600 ms pause each step (the cadence that reliably triggers
-     * Angular's intersection observer). After each step the DOM is queried with JS
-     * {@code textContent} matching (more robust than XPath {@code text()} for elements
-     * that may contain nested nodes). Scrolling continues until the {@code .sec_slider}
-     * ancestor of the matching {@code <h3>} is found, or the bottom of the page is reached.
+     * <p>Uses JS {@code textContent.trim()} matching rather than XPath {@code text()}
+     * so that headings whose text is split across nested child elements still match.
+     * {@code pageHeight} is re-read after every step so the loop continues as Angular
+     * appends new rows while scrolling.
      *
-     * <p><b>Phase 2 — wait for cards:</b> Once the section element is found, it is
-     * scrolled to the centre of the viewport ({@code scrollIntoView({block:'center'})})
-     * so Angular's intersection observer fires and begins rendering cards. The method
-     * then polls for a card element every 1 s for up to 6 s.
-     *
-     * <p><b>Card selectors:</b> different row types use different CSS classes —
-     * {@code .sheet_poster} for standard grid rows and {@code .roller_poster} for
-     * horizontal roller rows — so both are included in the querySelector.
-     *
-     * @param rowName the exact text of the row heading as it appears on the page
-     *                (e.g. {@code "Recommended for You"}, {@code "Live Now"})
-     * @return {@link PlayerPage} after clicking the first card, or {@code null} if the
-     *         row does not exist on the page or has no renderable cards for this account
+     * @param rowName the exact heading text (e.g. {@code "Live Now"})
+     * @return the {@code .sec_slider} {@link WebElement} for the row, or {@code null}
+     *         if the row does not appear on the page for this account
      */
-    public PlayerPage clickFirstCardInRow(String rowName) {
+    private WebElement findRowSection(String rowName) {
         JavascriptExecutor js = (JavascriptExecutor) driver;
-
-        // Always reset to the top so the intersection observer fires in order.
         js.executeScript("window.scrollTo(0, 0);");
-
         WebElement section = null;
         long scrollY = 0;
-
         try {
+            // If the page body is still at roughly viewport height (i.e. Angular has
+            // not yet rendered any row content), wait up to 30 s for it to grow.
+            // This handles the case where navigateHome() returned before the SPA
+            // finished bootstrapping after a player session.
             long pageHeight = (Long) js.executeScript("return document.body.scrollHeight");
+            int loadWait = 0;
+            while (pageHeight < 1200 && loadWait < 30) {
+                Thread.sleep(1000);
+                loadWait++;
+                pageHeight = (Long) js.executeScript("return document.body.scrollHeight");
+            }
 
-            // Phase 1: scroll until the section heading appears in the DOM.
-            // Use JS textContent (same as DiagnosticTest) rather than XPath text()
-            // so that headings with nested elements still match.
             while (section == null && scrollY <= pageHeight) {
                 scrollY += 600;
                 js.executeScript("window.scrollTo(0, " + scrollY + ")");
                 Thread.sleep(600);
                 pageHeight = (Long) js.executeScript("return document.body.scrollHeight");
-
                 section = (WebElement) js.executeScript(
                         "var target = arguments[0];"
                         + "var h3 = Array.from(document.querySelectorAll('h3.ott_tray_title'))"
@@ -150,30 +144,84 @@ public class DashboardPage extends BasePage {
                         + "return h3.closest('.sec_slider');",
                         rowName);
             }
-
-            if (section == null) return null;
-
-            // Phase 2: scroll the section into the centre of the viewport so Angular's
-            // intersection observer fires and renders the cards, then poll for a card.
-            js.executeScript("arguments[0].scrollIntoView({block:'center'});", section);
-
-            WebElement card = null;
-            for (int i = 0; i < 6 && card == null; i++) {
-                Thread.sleep(1000);
-                card = (WebElement) js.executeScript(
-                        "return arguments[0].querySelector('.sheet_poster, .roller_poster');", section);
-            }
-
-            if (card == null) return null;
-
-            jsClick(card);
-            Thread.sleep(2000);
-            return new PlayerPage(driver);
-
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return null;
         }
+        return section;
+    }
+
+    /**
+     * Returns the number of renderable cards in the named row.
+     *
+     * <p>Scrolls the page to find the row section, then scrolls the section into the
+     * viewport so Angular's intersection observer fires and cards are rendered. Polls
+     * for up to 6 seconds waiting for at least one card to appear.
+     *
+     * @param rowName the exact heading text of the row
+     * @return the card count, or {@code 0} if the row is absent or has no cards
+     */
+    public int getCardCountInRow(String rowName) {
+        WebElement section = findRowSection(rowName);
+        if (section == null) return 0;
+        JavascriptExecutor js = (JavascriptExecutor) driver;
+        js.executeScript("arguments[0].scrollIntoView({block:'center'});", section);
+        long count = 0;
+        for (int i = 0; i < 6 && count == 0; i++) {
+            try { Thread.sleep(1000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            count = (Long) js.executeScript(
+                    "return arguments[0].querySelectorAll('.sheet_poster,.roller_poster').length;",
+                    section);
+        }
+        return (int) count;
+    }
+
+    /**
+     * Clicks the card at the given 0-based index in the named row and returns the
+     * resulting player page.
+     *
+     * <p>Uses the same two-phase scroll strategy as {@link #clickFirstCardInRow}:
+     * find the section, scroll into view so cards render, then click by index.
+     * The card is scrolled into the centre of the viewport before clicking so it is
+     * not obscured by a sticky header.
+     *
+     * @param rowName the exact heading text of the row
+     * @param index   0-based card index within the row
+     * @return {@link PlayerPage} after clicking, or {@code null} if the row/card is
+     *         unavailable
+     */
+    public PlayerPage clickCardAtIndexInRow(String rowName, int index) {
+        WebElement section = findRowSection(rowName);
+        if (section == null) return null;
+        JavascriptExecutor js = (JavascriptExecutor) driver;
+        js.executeScript("arguments[0].scrollIntoView({block:'center'});", section);
+
+        WebElement card = null;
+        for (int i = 0; i < 6 && card == null; i++) {
+            try { Thread.sleep(1000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            card = (WebElement) js.executeScript(
+                    "var cards = arguments[0].querySelectorAll('.sheet_poster,.roller_poster');"
+                    + "return (cards.length > arguments[1]) ? cards[arguments[1]] : null;",
+                    section, index);
+        }
+        if (card == null) return null;
+
+        js.executeScript("arguments[0].scrollIntoView({block:'center'});", card);
+        jsClick(card);
+        try { Thread.sleep(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        return new PlayerPage(driver);
+    }
+
+    /**
+     * Scrolls to the first card in the named row and clicks it.
+     *
+     * <p>Convenience wrapper around {@link #clickCardAtIndexInRow(String, int)} with
+     * {@code index = 0}.
+     *
+     * @param rowName the exact heading text of the row
+     * @return {@link PlayerPage}, or {@code null} if the row/cards are unavailable
+     */
+    public PlayerPage clickFirstCardInRow(String rowName) {
+        return clickCardAtIndexInRow(rowName, 0);
     }
 
     /**
