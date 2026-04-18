@@ -3,7 +3,6 @@ package com.automation.tests;
 import com.automation.base.BaseTest;
 import com.automation.config.ConfigReader;
 import com.automation.pages.DashboardPage;
-import com.automation.pages.FrndlyLoginPage;
 import com.automation.pages.HomePage;
 import com.automation.pages.PlayerPage;
 import com.automation.pages.SettingsPage;
@@ -37,15 +36,8 @@ public class FrndlyTVTest extends BaseTest {
     @Test
     public void frndlyTVEndToEndTest() {
 
-        // ── 1. try.frndlytv.com → click Log In ──────────────────────────────────
-        HomePage homePage = new HomePage(driver);
-        FrndlyLoginPage loginPage = homePage.clickLogin();
-
-        // ── 2. Enter credentials (JS native setter required for Angular forms) ──
-        DashboardPage dashboard = loginPage.login(
-                ConfigReader.getUsername(),
-                ConfigReader.getPassword()
-        );
+        // ── 1 & 2. Navigate to landing page, click Log In, submit credentials ───
+        DashboardPage dashboard = login();
 
         // ── 3. Open first asset in Continue Watching row ─────────────────────────
         // Cards live inside an Angular carousel page that has display:none;
@@ -70,5 +62,16 @@ public class FrndlyTVTest extends BaseTest {
                 currentUrl.contains("watch.frndlytv.com/authenticator"),
                 "Expected authenticator URL but got: " + currentUrl
         );
+    }
+
+    /**
+     * Navigates to the landing page, clicks Log In, and submits credentials.
+     *
+     * @return {@link DashboardPage} after successful authentication
+     */
+    private DashboardPage login() {
+        return new HomePage(driver)
+                .clickLogin()
+                .login(ConfigReader.getUsername(), ConfigReader.getPassword());
     }
 }
