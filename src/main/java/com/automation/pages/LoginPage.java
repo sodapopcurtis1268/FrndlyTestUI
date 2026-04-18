@@ -7,7 +7,7 @@ import org.openqa.selenium.support.FindBy;
 /**
  * Page Object for a generic login page with standard username/password/button elements.
  *
- * <p>This is a general-purpose page object used by {@link com.automation.tests.LoginTest}
+ * <p>This is a general-purpose page object used by {@code LoginTest}
  * for positive and negative credential validation. Unlike {@link FrndlyLoginPage}, it
  * uses standard {@code sendKeys()} because it is not tied to an Angular reactive form.
  *
