@@ -50,7 +50,12 @@ Claude-test-automation/
 │   │   │   │   ├── FrndlyLoginPage.java     # Angular-aware login form
 │   │   │   │   ├── DashboardPage.java       # watch.frndlytv.com/home — row & card navigation
 │   │   │   │   ├── PlayerPage.java          # Video player page
-│   │   │   │   ├── SettingsPage.java        # Settings / sign-out page
+│   │   │   │   ├── GuidePage.java           # /guide — channel grid, prev/next/now navigation
+│   │   │   │   ├── MoviesPage.java          # /movies — genre filter + card grid
+│   │   │   │   ├── TvSeriesPage.java        # /tv_tv_series — genre filter + series cards
+│   │   │   │   ├── MyRecordingsPage.java    # /my_recording — DVR recordings list
+│   │   │   │   ├── AddOnsPage.java          # /add-ons — optional channel packages
+│   │   │   │   ├── SettingsPage.java        # /settings — full account/subscription/device mgmt
 │   │   │   │   └── LoginPage.java           # Generic login page (non-Angular)
 │   │   │   └── utils/
 │   │   │       ├── DriverFactory.java       # ThreadLocal WebDriver; local + LambdaTest remote
@@ -262,6 +267,119 @@ Developer utility tests for DOM inspection — not part of the standard suite. U
 
 ---
 
+## Page Objects Reference
+
+Every page extends `BasePage` and is located in `src/main/java/com/automation/pages/`.
+
+| Page Object | URL | Key Capabilities |
+|---|---|---|
+| `HomePage` | `try.frndlytv.com` | Click Log In button |
+| `FrndlyLoginPage` | `/authenticator` | Angular-compatible login form fill |
+| `DashboardPage` | `/home` | 20-row tray navigation, scroll-and-poll card clicks |
+| `PlayerPage` | `/watch/*` | Playback state, screenshot capture |
+| `GuidePage` | `/guide` | Channel grid, prev/next/now buttons, program tiles, filter tabs |
+| `MoviesPage` | `/movies` | Genre filter bar, card grid, row-level navigation |
+| `TvSeriesPage` | `/tv_tv_series` | Genre filter bar, series cards, row-level navigation |
+| `MyRecordingsPage` | `/my_recording` | Recording list, play by index/title, delete with confirmation |
+| `AddOnsPage` | `/add-ons` | Package cards, prices, subscribe/manage buttons |
+| `SettingsPage` | `/settings` | Account info, plan/billing, payment, notifications, parental controls, video quality, device management, sign out |
+
+### `GuidePage`
+
+The Guide page displays a live TV channel grid with time slots. Key methods:
+
+```java
+GuidePage guide = new GuidePage(driver).navigateTo();
+guide.clickPrevious();                     // scroll guide backward in time
+guide.clickNext();                         // scroll guide forward in time
+guide.clickNow();                          // jump back to current time
+guide.getChannelCount();                   // number of channel rows visible
+guide.getChannelNames();                   // List<String> of channel names
+guide.clickChannel("Hallmark");            // click channel by name fragment
+guide.getProgramTitles();                  // List<String> of all visible program tiles
+guide.clickProgramByTitle("Movie Night");  // click a program tile by title fragment
+guide.getCurrentProgramTitle();            // title of the currently airing program tile
+guide.clickFilter("Sports");              // click a genre filter tab if available
+```
+
+### `MoviesPage` / `TvSeriesPage`
+
+Both pages share identical structure — horizontal tray rows with a genre filter bar at the top.
+
+```java
+MoviesPage movies = new MoviesPage(driver).navigateTo();
+movies.getFilterNames();                   // ["All", "Action", "Comedy", ...]
+movies.clickFilter("Drama");              // filter and wait for re-render
+movies.getActiveFilter();                 // currently selected filter label
+movies.getMovieCardCount();               // total cards rendered (lazy-loaded so far)
+movies.getRowHeadings();                  // ["New Releases", "Popular", ...]
+movies.clickMovieAtIndex(0);              // click first card → returns PlayerPage
+movies.clickFirstCardInRow("Popular");    // scroll to row, click its first card
+```
+
+`TvSeriesPage` is identical — replace `clickMovieAtIndex` with `clickSeriesAtIndex` and `getMovieCardCount` with `getSeriesCardCount`.
+
+### `MyRecordingsPage`
+
+```java
+MyRecordingsPage rec = new MyRecordingsPage(driver).navigateTo();
+if (rec.hasRecordings()) {
+    rec.getRecordingTitles();              // List<String> of saved recording names
+    rec.playRecordingAtIndex(0);           // click first recording → PlayerPage
+    rec.playRecordingByTitle("News");      // find and play by title fragment
+    rec.deleteRecordingAtIndex(0);         // click delete + confirm dialog
+    rec.cancelDeletion();                  // click cancel in confirm dialog
+}
+String msg = rec.getEmptyStateText();     // null if recordings exist
+```
+
+### `AddOnsPage`
+
+```java
+AddOnsPage addOns = new AddOnsPage(driver).navigateTo();
+addOns.getAddOnCount();                    // number of package cards
+addOns.getAddOnNames();                    // ["Sports Plus", "DVR Upgrade", ...]
+addOns.getAddOnPrices();                   // ["$4.99/mo", "$9.99/mo", ...]
+addOns.isSubscribed("Sports");             // true if that package is active
+addOns.getSubscribedCount();              // how many are currently subscribed
+addOns.clickManageForAddOn(0);            // open manage/cancel flow (already subscribed)
+// Note: clickAddOnCard() on an unsubscribed card may initiate a real purchase
+```
+
+### `SettingsPage`
+
+```java
+SettingsPage settings = new SettingsPage(driver).navigateTo();
+
+// Account
+settings.getAccountName();                 // display name string
+settings.getEmail();                       // email address string
+settings.clickChangePassword();            // navigate to password change flow
+settings.clickEditProfile();              // open profile edit form
+
+// Subscription
+settings.getCurrentPlan();                 // "Basic Plan", "Premium", etc.
+settings.getRenewalDate();                 // next billing date string
+
+// Payment
+settings.getPaymentMethod();              // "Visa ending in 4242", etc.
+settings.clickUpdatePayment();            // open payment update flow
+
+// Notifications
+settings.getNotificationLabels();         // ["Email Newsletters", "Push Alerts", ...]
+settings.clickNotificationToggle(0);      // toggle the first notification switch
+
+// Devices
+settings.getDeviceCount();                // number of registered devices
+settings.getDeviceNames();                // List<String> of device names
+settings.removeDeviceAtIndex(0);          // click remove on first device
+
+// Sign Out
+settings.scrollToAndClickSignOut();       // end session → redirects to /authenticator
+```
+
+---
+
 ## Framework Architecture
 
 ### Page Object Model (POM)
@@ -374,6 +492,39 @@ public class MyPage extends BasePage {
     }
 }
 ```
+
+### Finding the right locator for a button
+
+Every `@FindBy` needs a CSS selector (or XPath) that uniquely targets the element in the live DOM.
+
+**Steps:**
+1. Open the page in Chrome (logged in)
+2. Right-click the button → **Inspect**
+3. In DevTools, note the element's `class`, `id`, and `aria-label` attributes
+4. Build a CSS selector — prefer `aria-label` for buttons, class fragments for containers
+
+```html
+<!-- Example element found in DevTools -->
+<button class="settings-btn change-password-btn" aria-label="Change Password">Change</button>
+```
+
+```java
+// Resulting @FindBy — multiple fallback selectors for resilience
+@FindBy(css = "button.change-password-btn, button[aria-label*='Change Password' i]")
+private WebElement changePasswordButton;
+
+public SettingsPage clickChangePassword() {
+    log.info("Clicking Change Password");
+    click(changePasswordButton);
+    return this;
+}
+```
+
+**CSS selector tips:**
+- `[class*='foo']` — matches any element whose class contains "foo" (resilient to class changes)
+- `[aria-label*='text' i]` — case-insensitive aria-label contains match (most stable)
+- `button[class*='cta']` — narrows to only `<button>` elements with "cta" in class
+- Comma-separate multiple selectors as fallbacks: `"selector1, selector2, selector3"`
 
 ### New test class
 
