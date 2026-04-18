@@ -5,10 +5,13 @@ import com.automation.config.ConfigReader;
 import com.automation.pages.DashboardPage;
 import com.automation.pages.HomePage;
 import com.automation.pages.PlayerPage;
+import com.automation.utils.VideoRecorder;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.openqa.selenium.JavascriptExecutor;
 import org.testng.Assert;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 import java.util.List;
@@ -65,6 +68,18 @@ public class TrendingMoviesPlaybackTest extends BaseTest {
     private static final long MAX_TTFF_MS = 30_000;
 
     private static final Random RANDOM = new Random();
+
+    private final VideoRecorder videoRecorder = new VideoRecorder();
+
+    @BeforeMethod
+    public void startRecording() {
+        videoRecorder.start("random-row-ttff");
+    }
+
+    @AfterMethod
+    public void stopRecording() {
+        videoRecorder.stop();
+    }
 
     /**
      * Rows whose cards do not lead to playable video content and should therefore
