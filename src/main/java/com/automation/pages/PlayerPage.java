@@ -64,15 +64,18 @@ public class PlayerPage extends BasePage {
         log.info("Waiting up to {}s for video playback to begin", timeoutSeconds);
         JavascriptExecutor js = (JavascriptExecutor) driver;
         long deadline = System.currentTimeMillis() + (timeoutSeconds * 1000L);
-        boolean playClickAttempted = false;
+        long nextPlayClickAtMs = constructedAtMs + 5_000; // first attempt at 5s, then every 5s
 
         while (System.currentTimeMillis() < deadline) {
             try {
-                // readyState >= 3 (HAVE_FUTURE_DATA) + currentTime > 0 means frames are arriving
+                // VOD: currentTime advances. Live HLS: currentTime may stay 0 but
+                // !paused + readyState >= 2 (HAVE_CURRENT_DATA) means frames are flowing.
                 Object result = js.executeScript(
                         "var v = document.querySelector('video');"
                         + "if (!v) return 0;"
-                        + "return (v.readyState >= 3 && v.currentTime > 0) ? 1 : 0;");
+                        + "var vod  = v.currentTime > 0 && v.readyState >= 3;"
+                        + "var live = !v.paused && !v.ended && v.readyState >= 2;"
+                        + "return (vod || live) ? 1 : 0;");
 
                 if (result instanceof Long && (Long) result == 1L) {
                     long ttff = System.currentTimeMillis() - constructedAtMs;
@@ -80,10 +83,11 @@ public class PlayerPage extends BasePage {
                     return ttff;
                 }
 
-                // After 5 s with no video: we likely landed on a detail/info page that
-                // requires a second tap on a Watch/Play button before playback begins.
-                if (!playClickAttempted && (System.currentTimeMillis() - constructedAtMs) > 5000) {
-                    playClickAttempted = true;
+                // Retry clicking the detail-page play button every 5s until video starts.
+                // This handles slow-rendering detail pages and cases where the first click
+                // fires before the button is in the DOM.
+                if (System.currentTimeMillis() >= nextPlayClickAtMs) {
+                    nextPlayClickAtMs += 5_000;
                     tryClickDetailPagePlayButton(js);
                 }
 
@@ -122,7 +126,11 @@ public class PlayerPage extends BasePage {
                     + "  'button[aria-label*=\"watch\" i]',"
                     + "  'button[aria-label*=\"play\" i]',"
                     + "  '[class*=\"ott-play\"]',"
-                    + "  '[class*=\"play-btn\"]'"
+                    + "  '[class*=\"play-btn\"]',"
+                    + "  '[class*=\"ott-watch\"]',"
+                    + "  '[routerLink*=\"/watch\"]',"
+                    + "  '[class*=\"primary\"] button',"
+                    + "  '[class*=\"hero\"] button'"
                     + "];"
                     + "for (var i = 0; i < selectors.length; i++) {"
                     + "  var el = document.querySelector(selectors[i]);"
@@ -130,12 +138,12 @@ public class PlayerPage extends BasePage {
                     + "}"
                     + "return null;");
             if (found != null) {
-                log.info("Detail page detected — clicked play button matching: {}", found);
+                log.info("Detail page play button clicked — selector: {}", found);
             } else {
-                log.debug("Detail page play button not found — continuing to poll for video");
+                log.info("No detail page play button found yet — will retry in 5s");
             }
         } catch (Exception e) {
-            log.debug("Error attempting detail page play click: {}", e.getMessage());
+            log.warn("Error attempting detail page play click: {}", e.getMessage());
         }
     }
 
