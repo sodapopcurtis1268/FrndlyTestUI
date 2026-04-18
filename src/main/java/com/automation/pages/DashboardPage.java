@@ -8,36 +8,74 @@ import org.openqa.selenium.support.FindBy;
 
 import java.util.List;
 
+/**
+ * Page Object for the Frndly TV home / dashboard page ({@code watch.frndlytv.com/home}).
+ *
+ * <p>The dashboard renders content rows lazily: each row's heading ({@code <h3>}) appears
+ * in the DOM when Angular bootstraps the section component, but the card elements inside
+ * the row are only injected when the section enters the browser viewport (Angular's
+ * intersection observer). This means:
+ * <ul>
+ *   <li>Searching the DOM for a row heading immediately after page load may succeed even
+ *       though the row's cards have not yet been rendered.</li>
+ *   <li>A full top-to-bottom scroll is required before all rows and cards are in the DOM.</li>
+ * </ul>
+ *
+ * <p>Row cards live inside Angular carousel pages that may have {@code display:none}
+ * applied by the slider library. Regular {@code WebElement.click()} is blocked by the
+ * visibility restriction; {@link #jsClick(WebElement)} dispatches a {@code MouseEvent}
+ * that still reaches Angular's {@code (click)} listener.
+ */
 public class DashboardPage extends BasePage {
 
-    // First card (div.sheet_poster) in the "Continue Watching" tray.
-    // Note: the Angular carousel renders these inside a cards_section that has
-    // display:none while off-screen.  We use jsClick() (dispatchEvent) instead
-    // of a regular click() so the Angular (click) binding still fires.
+    /**
+     * First card ({@code div.sheet_poster}) in the "Continue Watching" tray.
+     * The ancestor {@code sec_slider} XPath pattern is used consistently across all
+     * row locators in this class.
+     */
     @FindBy(xpath = "(//h3[normalize-space(text())='Continue Watching']"
             + "/ancestor::div[contains(@class,'sec_slider')]"
             + "//div[contains(@class,'sheet_poster')])[1]")
     private WebElement firstContinueWatchingCard;
 
-    // Gear/settings icon in the top-right header — confirmed class & routerlink.
+    /**
+     * Gear / settings icon in the top-right header.
+     * Confirmed selector via DOM inspection on watch.frndlytv.com.
+     */
     @FindBy(css = "div[routerlink='/settings'].ott-header-search")
     private WebElement settingsWheelButton;
 
+    /**
+     * Constructs the page and initialises {@code @FindBy} locators.
+     *
+     * @param driver the active WebDriver session
+     */
     public DashboardPage(WebDriver driver) {
         super(driver);
     }
 
+    /**
+     * Scrolls the "Continue Watching" first card into view and JS-clicks it.
+     *
+     * <p>A JS click is required because the card lives inside an Angular carousel page
+     * that has {@code display:none} applied by the slider — a standard Selenium click
+     * would throw an {@code ElementNotInteractableException}.
+     *
+     * @return {@link PlayerPage} after the click triggers playback navigation
+     */
     public PlayerPage clickFirstContinueWatchingAsset() {
         scrollIntoView(firstContinueWatchingCard);
-        // dispatchEvent bypasses the display:none restriction on the carousel page
         jsClick(firstContinueWatchingCard);
         return new PlayerPage(driver);
     }
 
     /**
-     * Scrolls from top to bottom of the home page in small steps so Angular's
-     * intersection observer loads every row into the DOM before we search by name.
-     * Without this, rows below the fold don't exist in the DOM yet.
+     * Scrolls the entire home page from top to bottom in 600 px increments so that
+     * Angular's intersection observer fires for every row and loads all cards into the DOM.
+     *
+     * <p>The page grows dynamically as new rows are appended, so {@code scrollHeight}
+     * is re-queried after each step. After reaching the bottom the page is scrolled
+     * back to the top.
      */
     public void scrollPageToLoadAllRows() {
         ((JavascriptExecutor) driver).executeScript("window.scrollTo(0, 0);");
@@ -47,11 +85,9 @@ public class DashboardPage extends BasePage {
             for (long y = 0; y < pageHeight; y += 600) {
                 ((JavascriptExecutor) driver).executeScript("window.scrollTo(0, " + y + ")");
                 Thread.sleep(500);
-                // Page grows as new rows are added
                 pageHeight = (Long) ((JavascriptExecutor) driver)
                         .executeScript("return document.body.scrollHeight");
             }
-            // Scroll back to top so the first row is in view
             ((JavascriptExecutor) driver).executeScript("window.scrollTo(0, 0);");
             Thread.sleep(500);
         } catch (InterruptedException e) {
@@ -60,15 +96,30 @@ public class DashboardPage extends BasePage {
     }
 
     /**
-     * Scrolls from the top of the page in 600 px steps (same cadence that triggers
-     * Angular's intersection observer in practice) until both the named row heading
-     * AND at least one card inside it appear in the DOM, then JS-clicks that card.
+     * Scrolls the home page until the named content row is visible, then clicks its
+     * first card and returns the resulting player page.
      *
-     * Scrolling past the section heading is required because Angular renders cards
-     * lazily only when the carousel enters the viewport — finding the heading node
-     * alone is not sufficient.
+     * <h3>Algorithm</h3>
+     * <p><b>Phase 1 — find the section:</b> Starting from the top, the page is scrolled
+     * in 600 px steps with a 600 ms pause each step (the cadence that reliably triggers
+     * Angular's intersection observer). After each step the DOM is queried with JS
+     * {@code textContent} matching (more robust than XPath {@code text()} for elements
+     * that may contain nested nodes). Scrolling continues until the {@code .sec_slider}
+     * ancestor of the matching {@code <h3>} is found, or the bottom of the page is reached.
      *
-     * @return PlayerPage, or null if the row/cards are not available for this account.
+     * <p><b>Phase 2 — wait for cards:</b> Once the section element is found, it is
+     * scrolled to the centre of the viewport ({@code scrollIntoView({block:'center'})})
+     * so Angular's intersection observer fires and begins rendering cards. The method
+     * then polls for a card element every 1 s for up to 6 s.
+     *
+     * <p><b>Card selectors:</b> different row types use different CSS classes —
+     * {@code .sheet_poster} for standard grid rows and {@code .roller_poster} for
+     * horizontal roller rows — so both are included in the querySelector.
+     *
+     * @param rowName the exact text of the row heading as it appears on the page
+     *                (e.g. {@code "Recommended for You"}, {@code "Live Now"})
+     * @return {@link PlayerPage} after clicking the first card, or {@code null} if the
+     *         row does not exist on the page or has no renderable cards for this account
      */
     public PlayerPage clickFirstCardInRow(String rowName) {
         JavascriptExecutor js = (JavascriptExecutor) driver;
@@ -125,9 +176,13 @@ public class DashboardPage extends BasePage {
         }
     }
 
+    /**
+     * Clicks the settings gear wheel in the header and waits for the settings page URL.
+     *
+     * @return {@link SettingsPage} after the Angular router completes the transition
+     */
     public SettingsPage clickSettingsWheel() {
         click(settingsWheelButton);
-        // Angular SPA client-side route change — wait for /settings URL
         waitForUrlContaining("settings");
         return new SettingsPage(driver);
     }

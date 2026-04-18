@@ -10,8 +10,30 @@ import com.automation.pages.SettingsPage;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
+/**
+ * End-to-end smoke test for the core Frndly TV user journey.
+ *
+ * <p>Covers the full authenticated session flow in a single browser session:
+ * <ol>
+ *   <li>Navigate to the landing page and click Log In.</li>
+ *   <li>Submit credentials via Angular-compatible form fill.</li>
+ *   <li>Open the first asset in the "Continue Watching" row.</li>
+ *   <li>Capture a player screenshot.</li>
+ *   <li>Return to the dashboard and navigate to Settings.</li>
+ *   <li>Sign Out and assert the redirect to the authenticator page.</li>
+ * </ol>
+ *
+ * <p>This test is registered in {@code testng.xml} under the "Frndly TV E2E" group.
+ */
 public class FrndlyTVTest extends BaseTest {
 
+    /**
+     * Full end-to-end journey: login → play content → settings → sign out.
+     *
+     * <p>Asserts that after signing out the browser URL contains
+     * {@code watch.frndlytv.com/authenticator}, confirming the session has been
+     * terminated and the user has been redirected correctly.
+     */
     @Test
     public void frndlyTVEndToEndTest() {
 
@@ -37,7 +59,6 @@ public class FrndlyTVTest extends BaseTest {
         dashboard = playerPage.clickClose();
 
         // ── 6. Click the settings gear wheel (top right) ────────────────────────
-        // Navigates to watch.frndlytv.com/settings via Angular router
         SettingsPage settingsPage = dashboard.clickSettingsWheel();
 
         // ── 7. Scroll to Sign Out and click it ───────────────────────────────────
