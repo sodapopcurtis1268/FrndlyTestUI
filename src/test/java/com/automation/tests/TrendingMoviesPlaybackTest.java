@@ -62,10 +62,11 @@ public class TrendingMoviesPlaybackTest extends BaseTest {
     private static final Logger log = LogManager.getLogger(TrendingMoviesPlaybackTest.class);
 
     /**
-     * Maximum acceptable time-to-first-frame in milliseconds.
-     * 30 seconds is a conservative ceiling — healthy TTFF should be under 10 s.
+     * Maximum acceptable time-to-first-frame in milliseconds, driven by
+     * {@code video.timeout.seconds} in config.properties (default 30 s).
      */
-    private static final long MAX_TTFF_MS = 30_000;
+    private static final long MAX_TTFF_MS =
+            ConfigReader.getVideoTimeoutSeconds() * 1000L;
 
     private static final Random RANDOM = new Random();
 
@@ -99,7 +100,20 @@ public class TrendingMoviesPlaybackTest extends BaseTest {
             "Featured Channels",
             "Add-Ons",
             "My Recordings",
-            "My Favorites"
+            "My Favorites",
+            // Live TV time-shift — player behaves differently from VOD, video detection fails
+            "72-Hour Look Back",
+            // Requires resume interaction rather than auto-play on click
+            "Continue Watching"
+    );
+
+    /**
+     * Row name prefixes excluded from random selection. Used for rows whose names
+     * are dynamic (e.g. personalised recommendation rows) but share a common prefix.
+     */
+    private static final java.util.List<String> NON_CONTENT_PREFIXES = java.util.List.of(
+            // "Because You Watched 'X'" rows mix live-TV cards with VOD; content type is unpredictable
+            "Because You Watched"
     );
 
     // ── Test ──────────────────────────────────────────────────────────────────
@@ -130,6 +144,7 @@ public class TrendingMoviesPlaybackTest extends BaseTest {
         List<String> allRows = dashboard.getRowNames();
         List<String> rowNames = allRows.stream()
                 .filter(r -> !NON_CONTENT_ROWS.contains(r))
+                .filter(r -> NON_CONTENT_PREFIXES.stream().noneMatch(r::startsWith))
                 .collect(Collectors.toList());
 
         log.info("Eligible rows for random selection ({}): {}", rowNames.size(), rowNames);
@@ -154,15 +169,16 @@ public class TrendingMoviesPlaybackTest extends BaseTest {
         }
 
         // ── Step 5: Measure time-to-first-frame ───────────────────────────────
-        log.info("Step 5: Waiting for video playback to start (timeout: 30s)");
-        long ttffMs = player.waitForVideoToStart(30);
+        int videoTimeoutSecs = ConfigReader.getVideoTimeoutSeconds();
+        log.info("Step 5: Waiting for video playback to start (timeout: {}s)", videoTimeoutSecs);
+        long ttffMs = player.waitForVideoToStart(videoTimeoutSecs);
 
         // ── Step 6: Assert, log result, screenshot ────────────────────────────
         if (ttffMs < 0) {
-            log.warn("Video did not start within 30s in row '{}' — capturing diagnostic screenshot", selectedRow);
+            log.warn("Video did not start within {}s in row '{}' — capturing diagnostic screenshot", videoTimeoutSecs, selectedRow);
             player.captureScreenshot("ttff-no-playback-" + selectedRow.replaceAll("\\s+", "-"));
             setLtStatus("failed");
-            Assert.fail("Video did not start within 30 seconds for row '" + selectedRow + "'.");
+            Assert.fail("Video did not start within " + videoTimeoutSecs + " seconds for row '" + selectedRow + "'.");
         }
 
         log.info("=== RESULT: Row='{}' | TTFF={}ms ({} s) ===",

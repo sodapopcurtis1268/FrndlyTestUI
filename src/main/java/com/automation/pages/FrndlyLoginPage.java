@@ -1,6 +1,9 @@
 package com.automation.pages;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.openqa.selenium.By;
+import org.openqa.selenium.TimeoutException;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.support.FindBy;
@@ -28,6 +31,8 @@ import org.openqa.selenium.support.FindBy;
  * </ol>
  */
 public class FrndlyLoginPage extends BasePage {
+
+    private static final Logger log = LogManager.getLogger(FrndlyLoginPage.class);
 
     /** Email address input field bound to Angular's reactive form. */
     @FindBy(css = "input[type='email']")
@@ -62,17 +67,35 @@ public class FrndlyLoginPage extends BasePage {
      * @return {@link DashboardPage} once the browser has navigated to {@code /home}
      */
     public DashboardPage login(String email, String password) {
-        wait.waitForVisible(emailField);
+        int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            if (attempt > 1) {
+                log.warn("Login attempt {} — redirecting back to authenticator", attempt);
+                // Navigate fresh so Angular reinitialises its auth-service
+                driver.navigate().to(com.automation.config.ConfigReader.getBaseUrl());
+                new HomePage(driver).clickLogin();
+            }
 
-        // Allow Angular's auth-service bootstrap requests to complete before submitting.
-        try { Thread.sleep(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            wait.waitForVisible(emailField);
 
-        typeAngular(emailField, email);
-        typeAngular(passwordField, password);
+            // Allow Angular's auth-service bootstrap requests to complete before submitting.
+            try { Thread.sleep(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
 
-        // Fresh lookup avoids a stale PageFactory proxy reference on the submit button.
-        driver.findElement(By.cssSelector("button[type='submit']")).click();
-        waitForUrlContaining("home");
-        return new DashboardPage(driver);
+            typeAngular(emailField, email);
+            typeAngular(passwordField, password);
+
+            // Fresh lookup avoids a stale PageFactory proxy reference on the submit button.
+            driver.findElement(By.cssSelector("button[type='submit']")).click();
+
+            try {
+                waitForUrlContaining("home");
+                if (attempt > 1) log.info("Login succeeded on attempt {}", attempt);
+                return new DashboardPage(driver);
+            } catch (TimeoutException e) {
+                log.warn("Login attempt {} timed out — still on: {}", attempt, driver.getCurrentUrl());
+                if (attempt == maxAttempts) throw e;
+            }
+        }
+        throw new IllegalStateException("Login failed after " + maxAttempts + " attempts");
     }
 }

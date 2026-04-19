@@ -123,6 +123,30 @@ public class ConfigReader {
         return get("password");
     }
 
+    /**
+     * Returns the screen index to record (0 = primary/built-in, 1 = first external, etc.).
+     * Defaults to 0 if not set.
+     */
+    public static int getScreenIndex() {
+        return Integer.parseInt(getOptional("screen.index", "0"));
+    }
+
+    /**
+     * Returns the maximum seconds to wait for video playback to begin (time-to-first-frame).
+     * Defaults to 30 if not set. Override with {@code -Dvideo.timeout.seconds=N}.
+     */
+    public static int getVideoTimeoutSeconds() {
+        return Integer.parseInt(getOptional("video.timeout.seconds", "30"));
+    }
+
+    /**
+     * Returns the seconds to let the video play before taking a screenshot.
+     * Defaults to 3 if not set. Override with {@code -Dvideo.play.seconds=N}.
+     */
+    public static int getVideoPlaySeconds() {
+        return Integer.parseInt(getOptional("video.play.seconds", "3"));
+    }
+
     // ── LambdaTest ────────────────────────────────────────────────────────────
 
     /**

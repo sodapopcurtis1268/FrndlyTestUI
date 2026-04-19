@@ -78,10 +78,17 @@ public class VideoRecorder {
             File dir = new File("videos");
             if (!dir.exists()) dir.mkdirs();
 
-            GraphicsConfiguration gc = GraphicsEnvironment
+            GraphicsDevice[] screens = GraphicsEnvironment
                     .getLocalGraphicsEnvironment()
-                    .getDefaultScreenDevice()
-                    .getDefaultConfiguration();
+                    .getScreenDevices();
+            int screenIndex = com.automation.config.ConfigReader.getScreenIndex();
+            if (screenIndex >= screens.length) {
+                log.warn("screen.index={} out of range (only {} screen(s) available), falling back to 0",
+                        screenIndex, screens.length);
+                screenIndex = 0;
+            }
+            GraphicsConfiguration gc = screens[screenIndex].getDefaultConfiguration();
+            log.info("Recording screen {} ({})", screenIndex, gc.getBounds());
 
             screenRecorder = new ScreenRecorder(
                     gc,

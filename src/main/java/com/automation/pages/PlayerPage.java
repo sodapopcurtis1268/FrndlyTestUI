@@ -195,8 +195,10 @@ public class PlayerPage extends BasePage {
      * @param name a label used as the filename prefix (e.g. {@code "row-Live-Now"})
      */
     public void captureScreenshot(String name) {
+        int playSeconds = com.automation.config.ConfigReader.getVideoPlaySeconds();
+        log.info("Letting video play for {}s before screenshot", playSeconds);
         try {
-            Thread.sleep(3000);
+            Thread.sleep(playSeconds * 1000L);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
