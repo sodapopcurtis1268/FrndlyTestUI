@@ -145,6 +145,7 @@ public class DriverFactory {
         ltOptions.put("video",          true);   // record full session video
         ltOptions.put("network",        true);   // capture network logs
         ltOptions.put("console",        true);   // capture browser console logs
+        ltOptions.put("idleTimeout",    300);    // extend idle timeout from default 90s to 300s
 
         MutableCapabilities browserCaps = switch (browser) {
             case "firefox" -> new FirefoxOptions();

@@ -1,0 +1,19 @@
+{
+  "name": "frndlytv-playwright",
+  "version": "1.0.0",
+  "description": "Playwright + TypeScript E2E tests for Frndly TV",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:smoke": "playwright test tests/frndlyTV.spec.ts --headed",
+    "test:rows": "playwright test tests/homePageRows.spec.ts",
+    "test:playback": "playwright test tests/assetPlayback.spec.ts",
+    "test:trending": "playwright test tests/trendingMovies.spec.ts",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.44.0",
+    "dotenv": "^16.4.0",
+    "typescript": "^5.4.0"
+  }
+}

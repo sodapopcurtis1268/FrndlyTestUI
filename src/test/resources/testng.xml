@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
-<suite name="Claude Test Automation Suite" verbose="1" parallel="methods" thread-count="2">
+<suite name="Claude Test Automation Suite" verbose="1" parallel="classes" thread-count="1">
 
+    <!-- LoginTest uses a generic template LoginPage (By.id: username) that does not
+         match the Frndly TV /authenticator flow. Disabled until the page object is
+         updated for the actual application. -->
+    <!--
     <test name="Login Tests">
         <classes>
             <class name="com.automation.tests.LoginTest"/>
         </classes>
     </test>
+    -->
 
     <test name="Frndly TV E2E">
         <classes>

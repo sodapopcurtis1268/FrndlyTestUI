@@ -1,17 +1,15 @@
 package com.automation.tests;
 
+import com.automation.base.BaseTest;
 import com.automation.config.ConfigReader;
 import com.automation.pages.DashboardPage;
 import com.automation.pages.HomePage;
 import com.automation.pages.PlayerPage;
-import com.automation.utils.DriverFactory;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.openqa.selenium.JavascriptExecutor;
-import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.support.ui.WebDriverWait;
-import org.testng.annotations.AfterClass;
-import org.testng.annotations.BeforeClass;
+import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 import org.testng.asserts.SoftAssert;
@@ -34,10 +32,9 @@ import java.util.Optional;
  * {@code @DataProvider}, giving one test result per row in the TestNG report.
  *
  * <h3>Session lifecycle</h3>
- * <p>This class does <em>not</em> extend {@link com.automation.base.BaseTest} so that
- * a single browser session can be shared across all 20 row-tests (one login instead
- * of twenty). {@code @BeforeClass} creates the driver and logs in; {@code @AfterClass}
- * quits the browser.
+ * <p>Extends {@link BaseTest} so that each data-provider row gets its own browser
+ * session (login → test up to 6 cards → quit). This keeps each individual session
+ * well within LambdaTest's per-session duration limits.
  *
  * <h3>Per-card flow</h3>
  * <ol>
@@ -60,61 +57,31 @@ import java.util.Optional;
  * abort the remaining cards in the same row. All failures for a row are reported
  * together at the end via {@code softAssert.assertAll()}.
  */
-public class AssetPlaybackTest {
+public class AssetPlaybackTest extends BaseTest {
 
     private static final Logger log = LogManager.getLogger(AssetPlaybackTest.class);
     private static final String HOME_URL  = "https://watch.frndlytv.com/home";
     private static final SimpleDateFormat TS = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
 
-    private WebDriver    driver;
     private DashboardPage dashboard;
 
     // ── Lifecycle ────────────────────────────────────────────────────────────────
 
     /**
-     * Creates the browser and establishes an authenticated session for the entire
-     * class. All 20 row-tests share this single session.
-     *
-     * <p>As an optimisation the method first navigates directly to {@code /home}.
-     * If a valid session cookie already exists (e.g. from a recent prior run) the
-     * Angular router stays on {@code /home} and content loads immediately — no
-     * login round-trip required. If the router redirects to {@code /authenticator}
-     * instead, the method falls back to a full login via the marketing landing page.
+     * Creates a fresh browser session and logs in before each data-provider row.
+     * Each row gets its own session so no single session runs longer than a few
+     * minutes, staying within LambdaTest's per-session duration limits.
      */
-    @BeforeClass
+    @BeforeMethod
+    @Override
     public void setUp() {
-        driver = DriverFactory.getDriver();
-        // Navigate directly to /home. If the session token from a previous run is
-        // still valid this lands on the dashboard immediately; if not, the Angular
-        // router redirects to /authenticator and we fall into the login branch.
-        driver.navigate().to(HOME_URL);
-        try {
-            new WebDriverWait(driver, Duration.ofSeconds(10))
-                    .until(d -> d.getCurrentUrl().startsWith(HOME_URL));
-            // Already logged in — just wait for content to load
-            new WebDriverWait(driver, Duration.ofSeconds(20))
-                    .until(d -> {
-                        Long n = (Long) ((JavascriptExecutor) d).executeScript(
-                                "return document.querySelectorAll('h3.ott_tray_title').length;");
-                        return n != null && n > 0;
-                    });
-            dashboard = new DashboardPage(driver);
-        } catch (Exception ignored) {
-            // Not yet logged in — perform a full login from the base URL.
-            driver.get(ConfigReader.getBaseUrl());
-            dashboard = new HomePage(driver)
-                    .clickLogin()
-                    .login(ConfigReader.getUsername(), ConfigReader.getPassword());
-        }
+        super.setUp(); // creates driver, navigates to ConfigReader.getBaseUrl()
+        dashboard = new HomePage(driver)
+                .clickLogin()
+                .login(ConfigReader.getUsername(), ConfigReader.getPassword());
     }
 
-    /**
-     * Quits the browser after all row-tests have run.
-     */
-    @AfterClass
-    public void tearDown() {
-        DriverFactory.quitDriver();
-    }
+    // tearDown() is inherited from BaseTest (@AfterMethod → DriverFactory.quitDriver())
 
     // ── Data provider ────────────────────────────────────────────────────────────
 
@@ -216,15 +183,23 @@ public class AssetPlaybackTest {
             return;
         }
 
-        // Play for 5 seconds
-        try { Thread.sleep(5000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-
-        // Capture screenshot — embeds start timestamp in filename
+        // Capture screenshot — captureScreenshot() already waits video.play.seconds internally
         String screenshotName = sanitise(rowName) + "-card" + index + "-" + startTimeMillis;
         player.captureScreenshot(screenshotName);
 
-        // Stop playing: navigate to /home
-        navigateHome();
+        // Stop playing: navigate back to /home.  VOD content can leave Angular in a
+        // state where the home page never fully re-bootstraps; if navigateHome() gives
+        // up after its retries, record the failure and skip screenshot validation for
+        // this card so subsequent cards in the row can still run.
+        try {
+            navigateHome();
+        } catch (RuntimeException e) {
+            log.warn("Row '{}' card {} — home page failed to reload after playback: {}",
+                    rowName, index, e.getMessage());
+            softAssert.fail("Row '" + rowName + "' card[" + index
+                    + "]: home page failed to reload after playback — " + e.getMessage());
+            return;
+        }
         dashboard = new DashboardPage(driver);
 
         // Validate screenshot was saved and is non-empty
@@ -290,55 +265,81 @@ public class AssetPlaybackTest {
      * {@code startsWith("https://watch.frndlytv.com/home")} never matches the
      * authenticator URL.
      *
-     * <h4>Content check</h4>
-     * <p>After a live-channel player session the Angular app can take over 20 s to
-     * bootstrap the home page.  The method polls for up to 30 s for at least one
-     * {@code h3.ott_tray_title} to appear.
+     * <h4>Content check with refresh retry</h4>
+     * <p>After a VOD player session Angular can fail to re-bootstrap the home page
+     * entirely.  To avoid hanging indefinitely (which exhausts the LambdaTest session
+     * budget), the method uses a two-attempt strategy:
+     * <ol>
+     *   <li>Navigate to {@code /home} and poll up to 30 s for row headings.</li>
+     *   <li>If that times out <em>and</em> the URL is still {@code /home}, issue a
+     *       hard {@code driver.navigate().refresh()} and poll for another 30 s.</li>
+     *   <li>If the refresh also times out, throw {@link RuntimeException} so the
+     *       calling card fails fast (via soft-assert in {@link #testCard}) rather
+     *       than stalling the entire LambdaTest session.</li>
+     * </ol>
      *
-     * <h4>Timeout fallback</h4>
-     * <p>If the content check times out, the action depends on the current URL:
-     * <ul>
-     *   <li><b>Still at {@code /home}</b> — Angular is just slow (common after a
-     *       live stream). Proceed immediately; {@link DashboardPage#findRowSection}
-     *       has its own polling loop that handles lazy content.</li>
-     *   <li><b>Redirected to {@code /authenticator}</b> — the session truly expired.
-     *       Navigate to the marketing landing page and perform a full re-login.</li>
-     * </ul>
+     * <h4>Session-expiry fallback</h4>
+     * <p>If either attempt ends at a non-{@code /home} URL (redirect to
+     * {@code /authenticator}), the session truly expired and a full re-login is
+     * performed.
      */
     private void navigateHome() {
         driver.navigate().to(HOME_URL);
         try {
             // Confirm the URL is actually /home (not /authenticator?returnUrl=/home).
-            // startsWith(HOME_URL) is reliable because the authenticator URL never
-            // begins with "https://watch.frndlytv.com/home".
             new WebDriverWait(driver, Duration.ofSeconds(10))
                     .until(d -> d.getCurrentUrl().startsWith(HOME_URL));
 
-            // After a player session the Angular app can take several seconds to
-            // bootstrap the home page.  Poll for up to 30 s for at least one row
-            // heading to appear before returning.
+            // First attempt: poll up to 30 s for at least one row heading.
             new WebDriverWait(driver, Duration.ofSeconds(30))
                     .until(d -> {
                         Long n = (Long) ((JavascriptExecutor) d).executeScript(
                                 "return document.querySelectorAll('h3.ott_tray_title').length;");
                         return n != null && n > 0;
                     });
-        } catch (Exception e) {
+            return; // content loaded — done
+        } catch (Exception firstTimeout) {
             String currentUrl = driver.getCurrentUrl();
-            if (currentUrl.startsWith(HOME_URL)) {
-                // Still at /home — Angular is bootstrapping slowly (e.g. after a live
-                // stream). findRowSection has its own polling loop and will wait for
-                // content while scrolling, so just proceed.
-                log.info("Home page loading slowly after playback, proceeding");
-            } else {
-                // Redirected to /authenticator — session actually expired. Navigate to
-                // the marketing landing page first so clickLogin() can find the button.
+            if (!currentUrl.startsWith(HOME_URL)) {
+                // Redirected away — session expired; re-login and return.
                 log.warn("Session expired (url={}), re-logging in", currentUrl);
                 driver.get(ConfigReader.getBaseUrl());
                 dashboard = new HomePage(driver)
                         .clickLogin()
                         .login(ConfigReader.getUsername(), ConfigReader.getPassword());
                 try { Thread.sleep(2000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                return;
+            }
+            // Still at /home but content hasn't appeared — Angular may be stuck after
+            // VOD playback.  Try a hard refresh before giving up.
+            log.info("Home page content not loaded after 30 s; retrying with page refresh");
+            driver.navigate().refresh();
+        }
+
+        // Second attempt after refresh: poll another 30 s.
+        try {
+            new WebDriverWait(driver, Duration.ofSeconds(30))
+                    .until(d -> {
+                        Long n = (Long) ((JavascriptExecutor) d).executeScript(
+                                "return document.querySelectorAll('h3.ott_tray_title').length;");
+                        return n != null && n > 0;
+                    });
+            log.info("Home page loaded after refresh");
+        } catch (Exception secondTimeout) {
+            String currentUrl = driver.getCurrentUrl();
+            if (!currentUrl.startsWith(HOME_URL)) {
+                // Redirected after refresh — session expired; re-login.
+                log.warn("Session expired after refresh (url={}), re-logging in", currentUrl);
+                driver.get(ConfigReader.getBaseUrl());
+                dashboard = new HomePage(driver)
+                        .clickLogin()
+                        .login(ConfigReader.getUsername(), ConfigReader.getPassword());
+                try { Thread.sleep(2000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+            } else {
+                // Angular is completely stuck — fail fast so the LT session is not
+                // consumed by an indefinite wait in findRowSection's scroll loop.
+                throw new RuntimeException(
+                        "Home page failed to display row content after navigate + refresh (60 s total)");
             }
         }
     }

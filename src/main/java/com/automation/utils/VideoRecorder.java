@@ -14,7 +14,7 @@ import static org.monte.media.FormatKeys.*;
 import static org.monte.media.VideoFormatKeys.*;
 
 /**
- * Utility that records the full screen to an AVI file in the {@code videos/}
+ * Utility that records the full screen to a QuickTime MOV file in the {@code videos/}
  * directory using Monte Screen Recorder.
  *
  * <h2>Usage</h2>
@@ -51,7 +51,7 @@ public class VideoRecorder {
     private String testName;
 
     /**
-     * Starts recording the default screen to {@code videos/<timestamp>.avi}.
+     * Starts recording the default screen to {@code videos/<timestamp>.mov}.
      *
      * <p>Fails silently if the environment does not support screen recording
      * (headless, no display, or missing permissions). Check the log for details.
@@ -93,16 +93,16 @@ public class VideoRecorder {
             screenRecorder = new ScreenRecorder(
                     gc,
                     gc.getBounds(),
-                    // Container format: AVI file
-                    new Format(MediaTypeKey, MediaType.FILE, MimeTypeKey, MIME_AVI),
-                    // Video track: Techsmith lossless codec @ 15 fps
+                    // Container format: QuickTime MOV (compatible with macOS QuickTime Player)
+                    new Format(MediaTypeKey, MediaType.FILE, MimeTypeKey, MIME_QUICKTIME),
+                    // Video track: JPEG @ 15 fps — natively supported by QuickTime
                     new Format(
                             MediaTypeKey,          MediaType.VIDEO,
-                            EncodingKey,           ENCODING_AVI_TECHSMITH_SCREEN_CAPTURE,
-                            CompressorNameKey,     ENCODING_AVI_TECHSMITH_SCREEN_CAPTURE,
+                            EncodingKey,           ENCODING_QUICKTIME_JPEG,
+                            CompressorNameKey,     ENCODING_QUICKTIME_JPEG,
                             DepthKey,              24,
                             FrameRateKey,          Rational.valueOf(15),
-                            QualityKey,            1.0f,
+                            QualityKey,            0.9f,
                             KeyFrameIntervalKey,   15 * 60),
                     // Mouse-cursor track: 30 fps overlay
                     new Format(
