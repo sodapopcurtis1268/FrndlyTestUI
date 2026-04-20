@@ -52,6 +52,10 @@ export default defineConfig({
     {
       name: 'setup',
       testMatch: /auth\.setup\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+      },
     },
 
     // ── Smoke suite ──────────────────────────────────────────────────────────
