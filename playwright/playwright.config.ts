@@ -30,7 +30,7 @@ export default defineConfig({
   ],
 
   use: {
-    baseURL: process.env.BASE_URL ?? 'https://try.frndlytv.com',
+    baseURL: process.env.BASE_URL ?? 'https://frndlytv-prod-copyweb.revlet.net/',
 
     // Keep video/screenshot/trace only when a test fails — avoids storing
     // gigabytes of recordings for every passing test
@@ -83,6 +83,21 @@ export default defineConfig({
         channel: 'chrome',
         storageState: '.auth/user.json',
         video: 'on',  // record every row test — playback visible in HTML report
+      },
+      dependencies: ['setup'],
+    },
+
+    // ── Home Screen suite ────────────────────────────────────────────────────
+    // Performance tests for the home screen load time SLA.
+    //   npx playwright test --project=homeScreen
+    {
+      name: 'homeScreen',
+      testMatch: /\/homeScreen\/.*\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+        storageState: '.auth/user.json',
+        video: 'on',
       },
       dependencies: ['setup'],
     },
