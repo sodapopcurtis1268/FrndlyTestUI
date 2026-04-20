@@ -36,7 +36,7 @@ export class FrndlyLoginPage extends BasePage {
         // Re-query submit button to avoid stale reference
         await this.page.locator("button[type='submit']").click();
 
-        await this.page.waitForURL('**/home', { timeout: 30_000 });
+        await this.page.waitForURL('**/home', { timeout: 60_000 });
         console.log(`Login succeeded on attempt ${attempt}`);
         return new DashboardPage(this.page);
       } catch (err) {

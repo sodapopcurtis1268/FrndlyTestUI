@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
+import { FrndlyLoginPage } from '../pages/FrndlyLoginPage';
 import { DashboardPage } from '../pages/DashboardPage';
 import { PlayerPage } from '../pages/PlayerPage';
 import { config } from '../utils/config';

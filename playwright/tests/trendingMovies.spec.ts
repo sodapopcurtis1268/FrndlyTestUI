@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { FrndlyLoginPage } from '../pages/FrndlyLoginPage';
 import { DashboardPage } from '../pages/DashboardPage';
 import { PlayerPage } from '../pages/PlayerPage';
 import { config } from '../utils/config';
