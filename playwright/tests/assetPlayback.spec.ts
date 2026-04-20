@@ -59,7 +59,7 @@ const TEST_CASES: TestCase[] = ROWS.flatMap(rowName =>
 );
 
 for (const { rowName, cardIndex } of TEST_CASES) {
-  test(`${rowName} — card ${cardIndex + 1}`, async ({ page }, testInfo) => {
+  test(`@regression ${rowName} — card ${cardIndex + 1}`, async ({ page }, testInfo) => {
     // ── Navigate to /home (storageState = already logged in) ─────────────────
     await navigateHome(page);
 

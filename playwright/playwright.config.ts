@@ -45,20 +45,20 @@ export default defineConfig({
   outputDir: 'test-results',
 
   projects: [
-    // ── Auth setup (runs once, saves .auth/user.json) ────────────────────────
-    // All other projects declare this as a dependency so it runs first.
-    // Tests in auth.setup.ts are NOT affected by the storageState below.
+    // ── Auth setup (runs once before any test suite) ─────────────────────────
+    // Logs in and saves .auth/user.json so all suites start pre-authenticated.
     {
       name: 'setup',
       testMatch: /auth\.setup\.ts/,
     },
 
-    // ── Main test project ────────────────────────────────────────────────────
-    // Starts every test pre-authenticated — no login per test.
-    // frndlyTV.spec.ts explicitly navigates to /authenticator anyway, so
-    // the pre-loaded storageState is harmlessly overridden by its own login.
+    // ── Smoke suite ──────────────────────────────────────────────────────────
+    // Fast sanity check (~3 tests). Run after every deploy or code change.
+    //   npx playwright test --project=smoke
+    //   npx playwright test --grep @smoke
     {
-      name: 'chromium',
+      name: 'smoke',
+      testMatch: /\/(liveNow|trendingMovies|frndlyTV)\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         storageState: '.auth/user.json',
@@ -66,8 +66,22 @@ export default defineConfig({
       dependencies: ['setup'],
     },
 
-    // Uncomment to add cross-browser coverage in CI:
-    // { name: 'firefox', use: { ...devices['Desktop Firefox'], storageState: '.auth/user.json' }, dependencies: ['setup'] },
-    // { name: 'webkit',  use: { ...devices['Desktop Safari'],  storageState: '.auth/user.json' }, dependencies: ['setup'] },
+    // ── Regression suite ─────────────────────────────────────────────────────
+    // Full coverage across all rows and cards (~80 tests). Run nightly or on PR.
+    //   npx playwright test --project=regression
+    //   npx playwright test --grep @regression
+    {
+      name: 'regression',
+      testMatch: /\/(homePageRows|assetPlayback)\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: '.auth/user.json',
+      },
+      dependencies: ['setup'],
+    },
+
+    // Uncomment to add cross-browser coverage:
+    // { name: 'smoke-firefox',     testMatch: /\/(liveNow|trendingMovies|frndlyTV)\.spec\.ts/,     use: { ...devices['Desktop Firefox'], storageState: '.auth/user.json' }, dependencies: ['setup'] },
+    // { name: 'regression-webkit', testMatch: /\/(homePageRows|assetPlayback)\.spec\.ts/, use: { ...devices['Desktop Safari'],  storageState: '.auth/user.json' }, dependencies: ['setup'] },
   ],
 });

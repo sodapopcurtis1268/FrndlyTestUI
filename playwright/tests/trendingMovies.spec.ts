@@ -26,7 +26,7 @@ const EXCLUDED_ROWS = new Set([
   'Continue Watching',
 ]);
 
-test('Random row — time to first frame', async ({ page }) => {
+test('@smoke Random row — time to first frame', async ({ page }) => {
   // ── Navigate to /home (already authenticated via storageState) ───────────────
   await page.goto(config.homeUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(

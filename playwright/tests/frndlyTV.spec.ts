@@ -10,7 +10,7 @@ import { config } from '../utils/config';
  */
 test.describe('Frndly TV E2E', () => {
 
-  test('login, play asset, open settings, sign out', async ({ page }) => {
+  test('@smoke login, play asset, open settings, sign out', async ({ page }) => {
     // ── Login ────────────────────────────────────────────────────────────────
     // FrndlyLoginPage.login() navigates directly to /authenticator — more
     // reliable than clicking the landing-page "Sign In" link (which points to

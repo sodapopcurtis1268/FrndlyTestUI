@@ -22,7 +22,7 @@ test.use({ video: 'on' });
 const ROW_NAME = 'Live Now';
 const HOME_URL = config.homeUrl;
 
-test(`${ROW_NAME} — first asset TTFF`, async ({ page }, testInfo) => {
+test(`@smoke ${ROW_NAME} — first asset TTFF`, async ({ page }, testInfo) => {
   // ── Navigate to /home ────────────────────────────────────────────────────────
   // storageState (from auth.setup.ts) means we arrive already logged in.
   // domcontentloaded is faster than the default 'load' for Angular SPAs.

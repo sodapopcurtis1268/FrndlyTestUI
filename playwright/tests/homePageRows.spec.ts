@@ -40,7 +40,7 @@ const ROWS = [
 ];
 
 for (const rowName of ROWS) {
-  test(`Row: ${rowName}`, async ({ page }) => {
+  test(`@regression Row: ${rowName}`, async ({ page }) => {
     // Navigate to /home — already authenticated via storageState
     await navigateHome(page);
 
