@@ -1,7 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { FrndlyLoginPage } from '../pages/FrndlyLoginPage';
 import { DashboardPage } from '../pages/DashboardPage';
-import { PlayerPage } from '../pages/PlayerPage';
 import { config } from '../utils/config';
 
 /**
@@ -29,8 +27,12 @@ const EXCLUDED_ROWS = new Set([
 ]);
 
 test('Random row — time to first frame', async ({ page }) => {
-  // ── Login ───────────────────────────────────────────────────────────────────
-  await new FrndlyLoginPage(page).login(config.username, config.password);
+  // ── Navigate to /home (already authenticated via storageState) ───────────────
+  await page.goto(config.homeUrl, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => document.querySelectorAll('h3.ott_tray_title').length > 0,
+    { timeout: 30_000 }
+  );
 
   // ── Scroll full dashboard to load all rows ──────────────────────────────────
   const db = new DashboardPage(page);

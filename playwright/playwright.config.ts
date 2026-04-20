@@ -45,12 +45,29 @@ export default defineConfig({
   outputDir: 'test-results',
 
   projects: [
+    // ── Auth setup (runs once, saves .auth/user.json) ────────────────────────
+    // All other projects declare this as a dependency so it runs first.
+    // Tests in auth.setup.ts are NOT affected by the storageState below.
+    {
+      name: 'setup',
+      testMatch: /auth\.setup\.ts/,
+    },
+
+    // ── Main test project ────────────────────────────────────────────────────
+    // Starts every test pre-authenticated — no login per test.
+    // frndlyTV.spec.ts explicitly navigates to /authenticator anyway, so
+    // the pre-loaded storageState is harmlessly overridden by its own login.
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: '.auth/user.json',
+      },
+      dependencies: ['setup'],
     },
+
     // Uncomment to add cross-browser coverage in CI:
-    // { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-    // { name: 'webkit',  use: { ...devices['Desktop Safari'] } },
+    // { name: 'firefox', use: { ...devices['Desktop Firefox'], storageState: '.auth/user.json' }, dependencies: ['setup'] },
+    // { name: 'webkit',  use: { ...devices['Desktop Safari'],  storageState: '.auth/user.json' }, dependencies: ['setup'] },
   ],
 });

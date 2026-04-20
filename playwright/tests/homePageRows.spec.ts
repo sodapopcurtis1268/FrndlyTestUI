@@ -1,17 +1,15 @@
 import { test, expect } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
-import { FrndlyLoginPage } from '../pages/FrndlyLoginPage';
 import { DashboardPage } from '../pages/DashboardPage';
 import { config } from '../utils/config';
 
 /**
  * Tests the first asset in each of the 20 home-page content rows.
  *
- * Each row is a separate test entry in the Playwright HTML report (mirrors
- * TestNG @DataProvider behaviour). With workers=4 in CI, 4 rows run in
- * parallel — each in its own isolated browser context with its own login
- * session. No shared state between tests.
+ * Each row is a separate test. With workers=4 in CI, 4 rows run in parallel —
+ * each in its own isolated browser context. All tests start pre-authenticated
+ * via storageState from auth.setup.ts (no per-test login overhead).
  *
  * Mirrors HomePageRowsTest.java.
  */
@@ -43,16 +41,8 @@ const ROWS = [
 
 for (const rowName of ROWS) {
   test(`Row: ${rowName}`, async ({ page }) => {
-    // Each test gets its own browser context (Playwright default) so login is
-    // independent — no session sharing between parallel rows.
-    const dashboard = await new FrndlyLoginPage(page).login(config.username, config.password);
-
-    // Navigate to /home and verify content loaded
-    await page.goto(HOME_URL);
-    await page.waitForFunction(
-      () => document.querySelectorAll('h3.ott_tray_title').length > 0,
-      { timeout: 30_000 }
-    );
+    // Navigate to /home — already authenticated via storageState
+    await navigateHome(page);
 
     const db = new DashboardPage(page);
     const cardCount = await db.getCardCountInRow(rowName);
@@ -89,11 +79,12 @@ for (const rowName of ROWS) {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Navigates to /home with a refresh retry if Angular fails to bootstrap content.
- * Throws if content never appears (prevents indefinite hangs on VOD rows).
+ * Navigates to /home using domcontentloaded (faster for Angular SPAs than the
+ * default 'load' event), then waits for row content to appear.
+ * Retries with a hard refresh if Angular fails to bootstrap on first load.
  */
 async function navigateHome(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto(HOME_URL);
+  await page.goto(HOME_URL, { waitUntil: 'domcontentloaded' });
 
   const contentLoaded = () =>
     page.waitForFunction(
@@ -106,12 +97,10 @@ async function navigateHome(page: import('@playwright/test').Page): Promise<void
     return;
   } catch {
     if (!page.url().startsWith(HOME_URL)) {
-      // Redirected to /authenticator — session expired (unusual mid-test)
       throw new Error(`Session expired, redirected to: ${page.url()}`);
     }
-    // Angular stuck after VOD — try a hard refresh
     console.log('Home page content not loaded after 30 s; retrying with refresh');
-    await page.reload();
+    await page.reload({ waitUntil: 'domcontentloaded' });
   }
 
   try {
