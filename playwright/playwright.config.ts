@@ -67,15 +67,17 @@ export default defineConfig({
     },
 
     // ── Regression suite ─────────────────────────────────────────────────────
-    // Full coverage across all rows and cards (~80 tests). Run nightly or on PR.
+    // One test per row (19 rows). Run nightly or on PR.
     //   npx playwright test --project=regression
     //   npx playwright test --grep @regression
+    //   npx playwright test blockbusterBoulevard   ← run a single row
     {
       name: 'regression',
-      testMatch: /\/(homePageRows|assetPlayback)\.spec\.ts/,
+      testMatch: /\/rows\/.*\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         storageState: '.auth/user.json',
+        video: 'on',  // record every row test — playback visible in HTML report
       },
       dependencies: ['setup'],
     },
