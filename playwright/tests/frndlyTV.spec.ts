@@ -9,6 +9,9 @@ import { config } from '../utils/config';
  * Mirrors FrndlyTVTest.java. Runs in a single browser session (~2 min).
  */
 test.describe('Frndly TV E2E', () => {
+  // This test exercises the full login flow, so it must start unauthenticated.
+  // Override the project-level storageState so cookies are not pre-loaded.
+  test.use({ storageState: { cookies: [], origins: [] } });
 
   test('@smoke login, play asset, open settings, sign out', async ({ page }) => {
     // ── Login ────────────────────────────────────────────────────────────────

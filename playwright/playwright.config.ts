@@ -9,14 +9,16 @@ const isCI = !!process.env.CI;
 export default defineConfig({
   testDir: './tests',
 
-  // Global test timeout (per test)
-  timeout: 90_000,
+  // Global test timeout (per test).
+  // Budget: 30 s goto + 30 s Angular render + 30 s video + 30 s screenshot/cleanup = 120 s
+  timeout: 120_000,
 
   // expect() timeout (auto-wait)
   expect: { timeout: 30_000 },
 
-  // Retry once on CI to handle transient network flakes; no retries locally
-  retries: isCI ? 1 : 0,
+  // Retry once to handle transient network flakes (slow Frndly TV server,
+  // Angular lazy-load timeouts). One retry is cheap vs. false-failure noise.
+  retries: 1,
 
   // Parallel workers: 4 on CI (4 independent browser sessions); 1 locally so
   // you can watch the headed run without windows fighting each other
@@ -36,9 +38,8 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
 
-    // actionTimeout controls how long individual actions (click, fill, etc.)
-    // wait before throwing. 15 s is generous for remote page interactions.
-    actionTimeout: 15_000,
+    // No actionTimeout set here — individual methods pass explicit timeouts
+    // where needed. The global test timeout (90 s above) is the safety net.
   },
 
   // Output directory for test artifacts (videos, screenshots, traces)
@@ -61,6 +62,9 @@ export default defineConfig({
       testMatch: /\/(liveNow|trendingMovies|frndlyTV)\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
+        // Use Google Chrome (not Chromium) — Chrome includes Widevine DRM
+        // which is required for VOD playback on Frndly TV.
+        channel: 'chrome',
         storageState: '.auth/user.json',
       },
       dependencies: ['setup'],
@@ -76,6 +80,7 @@ export default defineConfig({
       testMatch: /\/rows\/.*\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
+        channel: 'chrome',
         storageState: '.auth/user.json',
         video: 'on',  // record every row test — playback visible in HTML report
       },

@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
       - name: Checkout repository
@@ -27,7 +27,9 @@ jobs:
         working-directory: playwright
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        # Install Chrome (not Chromium) — Chrome includes Widevine DRM
+        # which is required for VOD content playback on Frndly TV.
+        run: npx playwright install --with-deps chrome
         working-directory: playwright
 
       - name: Run Playwright tests

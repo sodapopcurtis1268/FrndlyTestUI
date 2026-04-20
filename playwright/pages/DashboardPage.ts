@@ -103,7 +103,9 @@ export class DashboardPage extends BasePage {
 
     await card.evaluate((el: Element) => el.scrollIntoView({ block: 'center' }));
     await this.page.waitForTimeout(300);
+
     await this.jsClick(card);
+
     await this.page.waitForTimeout(2000);
     return new PlayerPage(this.page);
   }

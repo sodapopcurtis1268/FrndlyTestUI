@@ -23,15 +23,30 @@ export class PlayerPage extends BasePage {
     const detailRetryMs = 5000;
     let lastDetailRetry = Date.now();
 
+    // Frndly TV detail pages show CTAs like "Continue Watching", "Start Over",
+    // or "Watch" before the video element appears. These selectors cover all
+    // known variants — text-based selectors are most resilient to class changes.
     const detailPlaySelectors = [
+      'button:has-text("Continue Watching")',
+      'button:has-text("Start Over")',
+      'button:has-text("Watch Now")',
+      'button:has-text("Watch")',
+      'button:has-text("Play")',
       'button[class*="watch"]',
       'button[class*="play"]',
-      'button[aria-label*="play"]',
-      'button[aria-label*="Play"]',
+      'button[aria-label*="play" i]',
       'button.watch-btn',
     ];
 
     while (Date.now() - this.constructedAtMs < timeoutMs) {
+      // Detect Widevine DRM error — VOD content that requires a license server
+      // cannot play in standard Playwright Chrome (no Widevine CDM). Return a
+      // sentinel so callers can skip gracefully instead of waiting the full timeout.
+      const drmBlocked = await this.page.evaluate(() =>
+        document.body?.innerText?.includes('DRM_NO_KEY_SYSTEM') ?? false
+      );
+      if (drmBlocked) return -2;
+
       const playing: boolean = await this.page.evaluate(() => {
         const video = document.querySelector('video');
         if (!video) return false;

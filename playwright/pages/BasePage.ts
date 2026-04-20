@@ -24,12 +24,14 @@ export class BasePage {
   }
 
   /**
-   * Dispatches a MouseEvent via JS — bypasses Playwright's visibility check for
-   * elements that are technically display:none but respond to click events.
+   * Clicks via HTMLElement.click() — bypasses Playwright's visibility check for
+   * elements that are technically hidden (display:none, zero-size) but still
+   * respond to programmatic clicks. Unlike dispatchEvent(MouseEvent), the
+   * native .click() method triggers Angular's router link handlers.
    */
   async jsClick(locator: Locator): Promise<void> {
     await locator.evaluate((el: Element) => {
-      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      (el as HTMLElement).click();
     });
   }
 

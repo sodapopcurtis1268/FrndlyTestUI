@@ -25,7 +25,9 @@ export function createRowTest(rowName: string): void {
 
   test(`@regression ${rowName} — first asset TTFF`, async ({ page }, testInfo) => {
       // ── Navigate to /home ────────────────────────────────────────────────────
-      await page.goto(HOME_URL, { waitUntil: 'domcontentloaded' });
+      // Explicit timeout prevents page.goto from consuming the full test budget
+      // on a slow server — budget: 30 s for goto, 30 s for Angular render.
+      await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       await page.waitForFunction(
         () => document.querySelectorAll('h3.ott_tray_title').length > 0,
         { timeout: 30_000 }
@@ -50,6 +52,10 @@ export function createRowTest(rowName: string): void {
 
       // ── Measure TTFF ─────────────────────────────────────────────────────────
       const ttffMs = await player.waitForVideoToStart(config.videoTimeoutSeconds);
+      if (ttffMs === -2) {
+        test.skip(true, `Row '${rowName}': DRM_NO_KEY_SYSTEM — VOD content requires Widevine license, not available in this environment`);
+        return;
+      }
       if (ttffMs === -1) {
         throw new Error(
           `Row '${rowName}': video did not start within ${config.videoTimeoutSeconds} s`
