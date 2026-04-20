@@ -44,6 +44,90 @@ jobs:
           VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '5' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
 
+      # ── Executive summary written to the Actions run page ────────────────────
+      - name: Write executive summary
+        if: always()
+        working-directory: playwright
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+
+          let stats = { expected: 0, unexpected: 0, skipped: 0, flaky: 0 };
+          let suites = [];
+
+          try {
+            const raw = fs.readFileSync('test-results/results.json', 'utf8');
+            const data = JSON.parse(raw);
+            stats = data.stats ?? stats;
+
+            // Collect per-suite results for the detail table
+            function walk(suite) {
+              if (!suite) return;
+              (suite.suites ?? []).forEach(walk);
+              (suite.specs ?? []).forEach(spec => {
+                spec.tests?.forEach(t => {
+                  const status = t.results?.[0]?.status ?? 'unknown';
+                  const duration = t.results?.[0]?.duration ?? 0;
+                  const title = [suite.title, spec.title].filter(Boolean).join(' › ');
+                  suites.push({ title, status, duration });
+                });
+              });
+            }
+            (data.suites ?? []).forEach(walk);
+          } catch (e) {
+            console.error('Could not parse results.json:', e.message);
+          }
+
+          const total   = stats.expected + stats.unexpected + stats.skipped + stats.flaky;
+          const passed  = stats.expected;
+          const failed  = stats.unexpected;
+          const skipped = stats.skipped;
+          const flaky   = stats.flaky;
+
+          const icon = failed > 0 ? '❌' : '✅';
+          const status = failed > 0 ? 'FAILED' : 'PASSED';
+
+          const lines = [];
+          lines.push(`## ${icon} Frndly TV — Test Run ${status}`);
+          lines.push('');
+          lines.push('| ✅ Passed | ❌ Failed | ⏭️ Skipped | 🔁 Flaky | 📋 Total |');
+          lines.push('|:---:|:---:|:---:|:---:|:---:|');
+          lines.push(`| ${passed} | ${failed} | ${skipped} | ${flaky} | ${total} |`);
+          lines.push('');
+
+          if (failed > 0) {
+            lines.push('### ❌ Failures');
+            suites.filter(s => s.status === 'failed').forEach(s => {
+              lines.push(`- **${s.title}** (${(s.duration/1000).toFixed(1)} s)`);
+            });
+            lines.push('');
+          }
+
+          if (flaky > 0) {
+            lines.push('### 🔁 Flaky Tests (passed on retry)');
+            suites.filter(s => s.status === 'flaky').forEach(s => {
+              lines.push(`- ${s.title}`);
+            });
+            lines.push('');
+          }
+
+          if (skipped > 0) {
+            lines.push('<details><summary>⏭️ Skipped tests (DRM / account-specific rows)</summary>');
+            lines.push('');
+            suites.filter(s => s.status === 'skipped').forEach(s => {
+              lines.push(`- ${s.title}`);
+            });
+            lines.push('');
+            lines.push('</details>');
+            lines.push('');
+          }
+
+          lines.push('> 📄 Download the **playwright-report** artifact above for full videos, screenshots, and TTFF measurements.');
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
+          console.log('Executive summary written.');
+          EOF
+
       # Always upload the HTML report so you can review results even on failure
       - name: Upload Playwright HTML report
         uses: actions/upload-artifact@v4
