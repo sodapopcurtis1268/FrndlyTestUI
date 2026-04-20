@@ -1,6 +1,21 @@
-# FrndlyTestUI — Selenium + TestNG Automation Framework
+# FrndlyTestUI — Test Automation Framework
 
-End-to-end UI test automation for [watch.frndlytv.com](https://watch.frndlytv.com), built with Java 17, Selenium 4, and TestNG. Tests run locally against Chrome/Firefox/Edge or remotely on **LambdaTest's Selenium Grid** with a single config flag.
+End-to-end UI test automation for [watch.frndlytv.com](https://watch.frndlytv.com).
+
+This repo contains **two test stacks**:
+
+| Stack | Location | Language | Grid | Status |
+|---|---|---|---|---|
+| **Playwright** | `playwright/` | TypeScript | GitHub Actions (free) | ✅ Active |
+| **Selenium + TestNG** | `src/` | Java 17 | LambdaTest / local | Legacy |
+
+**Start here for new tests:** [`playwright/README.md`](playwright/README.md)
+
+---
+
+# Selenium + TestNG Framework (Legacy)
+
+Built with Java 17, Selenium 4, and TestNG. Tests run locally against Chrome/Firefox/Edge or remotely on **LambdaTest's Selenium Grid** with a single config flag.
 
 ---
 
