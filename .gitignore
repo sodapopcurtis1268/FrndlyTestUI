@@ -16,6 +16,9 @@ release.properties
 # Test artifacts
 screenshots/
 videos/
+logs/
+run_results/
+test-results/
 *.dump
 *.dumpstream
 
