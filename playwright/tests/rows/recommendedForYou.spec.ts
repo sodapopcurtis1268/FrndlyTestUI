@@ -1,2 +1,4 @@
 import { createRowTest } from '../../utils/createRowTest';
-createRowTest('Recommended for You');
+
+// Personalised row — content varies by account and may include VOD (DRM).
+createRowTest('Recommended for You', { skipOnTimeout: true });

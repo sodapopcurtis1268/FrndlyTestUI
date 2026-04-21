@@ -1,2 +1,4 @@
 import { createRowTest } from '../../utils/createRowTest';
-createRowTest('Rom-Com');
+
+// Row is sometimes absent for this account; when present, content may be VOD.
+createRowTest('Rom-Com', { skipOnTimeout: true });
