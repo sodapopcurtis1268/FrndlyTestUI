@@ -10,8 +10,9 @@ export default defineConfig({
   testDir: './tests',
 
   // Global test timeout (per test).
-  // Budget: 30 s goto + 30 s Angular render + 30 s video + 30 s screenshot/cleanup = 120 s
-  timeout: 120_000,
+  // Budget: 30 s goto + 30 s Angular render + 30 s video + 30 s screenshot/cleanup + 60 s CI headroom = 180 s
+  // CI machines share CPU across 2 workers + video recording, so navigation alone can take 60-90 s.
+  timeout: 180_000,
 
   // expect() timeout (auto-wait)
   expect: { timeout: 30_000 },
@@ -20,9 +21,10 @@ export default defineConfig({
   // Angular lazy-load timeouts). One retry is cheap vs. false-failure noise.
   retries: 1,
 
-  // Parallel workers: 4 on CI (4 independent browser sessions); 1 locally so
-  // you can watch the headed run without windows fighting each other
-  workers: isCI ? 4 : 1,
+  // Parallel workers: 2 on CI — 4 workers caused CPU contention that made
+  // page.goto + waitForFunction consume 90+ s, leaving no budget for video.
+  // 2 workers doubles per-test CPU budget; suite takes ~2× longer but is stable.
+  workers: isCI ? 2 : 1,
 
   reporter: [
     ['html', { outputFolder: 'playwright-report', open: 'never' }],

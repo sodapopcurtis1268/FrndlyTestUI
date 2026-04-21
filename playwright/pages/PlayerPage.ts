@@ -39,12 +39,23 @@ export class PlayerPage extends BasePage {
     ];
 
     while (Date.now() - this.constructedAtMs < timeoutMs) {
-      // Detect Widevine DRM error — VOD content that requires a license server
-      // cannot play in standard Playwright Chrome (no Widevine CDM). Return a
-      // sentinel so callers can skip gracefully instead of waiting the full timeout.
-      const drmBlocked = await this.page.evaluate(() =>
-        document.body?.innerText?.includes('DRM_NO_KEY_SYSTEM') ?? false
-      );
+      // Detect Widevine DRM / media errors — VOD content that requires a license
+      // server cannot play in standard Playwright Chrome (no Widevine CDM).
+      // Checks multiple signals:
+      //   • DRM_NO_KEY_SYSTEM text in the page (most explicit)
+      //   • video.error.code 3 (MEDIA_ERR_DECODE) or 4 (MEDIA_ERR_SRC_NOT_SUPPORTED)
+      //     — both appear when DRM blocks playback without showing text in the DOM
+      //   • "not available" / "unavailable" messages shown by the Frndly player
+      const drmBlocked = await this.page.evaluate(() => {
+        const body = document.body?.innerText ?? '';
+        if (body.includes('DRM_NO_KEY_SYSTEM')) return true;
+        const video = document.querySelector('video') as HTMLVideoElement | null;
+        if (video?.error) {
+          // code 3 = MEDIA_ERR_DECODE, code 4 = MEDIA_ERR_SRC_NOT_SUPPORTED
+          if (video.error.code === 3 || video.error.code === 4) return true;
+        }
+        return false;
+      });
       if (drmBlocked) return -2;
 
       const playing: boolean = await this.page.evaluate(() => {
