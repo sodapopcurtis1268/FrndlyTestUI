@@ -23,8 +23,12 @@ import * as path from 'path';
 const LOAD_TIME_THRESHOLD_MS = 2_000;
 
 // Candidate selectors for the hero/spotlight carousel container.
-// Listed in specificity order — first match wins.
+// The carousel uses Slick slider — look for its wrapper elements.
 const HERO_CONTAINER_SELECTORS = [
+  '.slick-slider',
+  '[class*="slick-slider"]',
+  '[class*="ott-carousel"]',
+  '[class*="carousel-grid"]',
   '.ott_hero',
   '.ott_spotlight',
   '.hero_banner',
@@ -34,13 +38,15 @@ const HERO_CONTAINER_SELECTORS = [
   '[class*="hero_slider"]',
   '[class*="spotlight_slider"]',
   '[class*="feature_banner"]',
-  '[class*="hero-carousel"]',
   '[class*="banner_sec"]',
 ];
 
 // CTA button selectors to try within the hero container.
-// Ordered from most-specific to least-specific.
+// "Dive In" with class btn-primary is the confirmed Frndly TV carousel CTA.
+// Additional selectors kept as fallbacks for content rotation.
 const HERO_CTA_SELECTORS = [
+  'button.btn-primary',           // confirmed: "Dive In" button
+  'button:has-text("Dive In")',   // confirmed text label
   'button:has-text("Watch Now")',
   'button:has-text("More Info")',
   'button:has-text("Watch")',
@@ -50,8 +56,6 @@ const HERO_CTA_SELECTORS = [
   'a:has-text("Watch Now")',
   'a:has-text("More Info")',
   '[class*="cta"]',
-  '[class*="watch_btn"]',
-  '[class*="watch-btn"]',
 ];
 
 // Folio/detail page play buttons — same set as tileLoadTime.spec.ts
@@ -130,7 +134,9 @@ test.describe('Home Screen', () => {
       // then falling back to the full page top-half.
       let ctaHandle: { selector: string; scopeSelector: string | null } | null = null;
 
-      // Build scoped selectors: hero container first, then full-page fallback
+      // Build scoped selectors: hero container first (if found), then full-page.
+      // On the confirmed Frndly TV layout the container is .slick-slider;
+      // full-page fallback handles any layout variation.
       const scopedSearches: Array<{ scope: string | null; ctaSel: string }> = [];
 
       if (heroContainerInfo) {
@@ -138,7 +144,6 @@ test.describe('Home Screen', () => {
           scopedSearches.push({ scope: heroContainerInfo.selector, ctaSel });
         }
       }
-      // Also try full-page (for cases where the hero is not wrapped in a known container)
       for (const ctaSel of HERO_CTA_SELECTORS) {
         scopedSearches.push({ scope: null, ctaSel });
       }
