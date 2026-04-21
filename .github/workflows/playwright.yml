@@ -6,10 +6,19 @@ on:
   pull_request:
   workflow_dispatch:    # Allows manual trigger from the GitHub Actions UI
 
+# Shared install steps extracted as YAML anchors aren't supported in GitHub
+# Actions — each job repeats the install sequence (checkout → node → npm ci →
+# browsers). This keeps the file readable without composite actions overhead.
+
 jobs:
-  test:
+
+  # ── Smoke ──────────────────────────────────────────────────────────────────
+  # Fast sanity check: login, Live Now TTFF, random row TTFF, E2E.
+  # Runs on every push/PR. Gate pull requests on this job.
+  smoke:
+    name: Smoke Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -27,13 +36,11 @@ jobs:
         working-directory: playwright
 
       - name: Install Playwright browsers
-        # Install Chrome (not Chromium) — Chrome includes Widevine DRM
-        # which is required for VOD content playback on Frndly TV.
         run: npx playwright install --with-deps chrome
         working-directory: playwright
 
-      - name: Run Playwright tests
-        run: npx playwright test
+      - name: Run smoke tests
+        run: npx playwright test --project=smoke
         working-directory: playwright
         env:
           CI: true
@@ -44,10 +51,11 @@ jobs:
           VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '5' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
 
-      # ── Executive summary written to the Actions run page ────────────────────
       - name: Write executive summary
         if: always()
         working-directory: playwright
+        env:
+          SUITE_NAME: Smoke
         run: |
           node - <<'EOF'
           const fs = require('fs');
@@ -60,7 +68,6 @@ jobs:
             const data = JSON.parse(raw);
             stats = data.stats ?? stats;
 
-            // Collect per-suite results for the detail table
             function walk(suite) {
               if (!suite) return;
               (suite.suites ?? []).forEach(walk);
@@ -83,12 +90,13 @@ jobs:
           const failed  = stats.unexpected;
           const skipped = stats.skipped;
           const flaky   = stats.flaky;
+          const suite   = process.env.SUITE_NAME ?? 'Tests';
 
-          const icon = failed > 0 ? '❌' : '✅';
+          const icon   = failed > 0 ? '❌' : '✅';
           const status = failed > 0 ? 'FAILED' : 'PASSED';
 
           const lines = [];
-          lines.push(`## ${icon} Frndly TV — Test Run ${status}`);
+          lines.push(`## ${icon} Frndly TV — ${suite} ${status}`);
           lines.push('');
           lines.push('| ✅ Passed | ❌ Failed | ⏭️ Skipped | 🔁 Flaky | 📋 Total |');
           lines.push('|:---:|:---:|:---:|:---:|:---:|');
@@ -122,26 +130,164 @@ jobs:
             lines.push('');
           }
 
-          lines.push('> 📄 Download the **playwright-report** artifact above for full videos, screenshots, and TTFF measurements.');
+          lines.push(`> 📄 Download the **playwright-report-smoke** artifact above for full videos, screenshots, and TTFF measurements.`);
 
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
           console.log('Executive summary written.');
           EOF
 
-      # Always upload the HTML report so you can review results even on failure
-      - name: Upload Playwright HTML report
+      - name: Upload Playwright report (smoke)
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: playwright-report
+          name: playwright-report-smoke
           path: playwright/playwright-report/
           retention-days: 30
 
-      # Upload test result artifacts (videos, screenshots, traces) on failure
-      - name: Upload test artifacts
+      - name: Upload test artifacts (smoke)
         uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: test-results
+          name: test-results-smoke
+          path: playwright/test-results/
+          retention-days: 7
+
+  # ── Regression + Home Screen ───────────────────────────────────────────────
+  # Full row-by-row regression suite + home screen performance test.
+  # Runs in parallel with smoke — failures here don't block the smoke gate.
+  regression:
+    name: Regression Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: playwright/package-lock.json
+
+      - name: Install npm dependencies
+        run: npm ci
+        working-directory: playwright
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chrome
+        working-directory: playwright
+
+      - name: Run regression tests
+        run: npx playwright test --project=regression --project=homeScreen
+        working-directory: playwright
+        env:
+          CI: true
+          BASE_URL: ${{ secrets.BASE_URL }}
+          WATCH_URL: ${{ secrets.WATCH_URL }}
+          USERNAME: ${{ secrets.FRNDLY_USERNAME }}
+          PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
+          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '5' }}
+          VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+
+      - name: Write executive summary
+        if: always()
+        working-directory: playwright
+        env:
+          SUITE_NAME: Regression
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+
+          let stats = { expected: 0, unexpected: 0, skipped: 0, flaky: 0 };
+          let suites = [];
+
+          try {
+            const raw = fs.readFileSync('test-results/results.json', 'utf8');
+            const data = JSON.parse(raw);
+            stats = data.stats ?? stats;
+
+            function walk(suite) {
+              if (!suite) return;
+              (suite.suites ?? []).forEach(walk);
+              (suite.specs ?? []).forEach(spec => {
+                spec.tests?.forEach(t => {
+                  const status = t.results?.[0]?.status ?? 'unknown';
+                  const duration = t.results?.[0]?.duration ?? 0;
+                  const title = [suite.title, spec.title].filter(Boolean).join(' › ');
+                  suites.push({ title, status, duration });
+                });
+              });
+            }
+            (data.suites ?? []).forEach(walk);
+          } catch (e) {
+            console.error('Could not parse results.json:', e.message);
+          }
+
+          const total   = stats.expected + stats.unexpected + stats.skipped + stats.flaky;
+          const passed  = stats.expected;
+          const failed  = stats.unexpected;
+          const skipped = stats.skipped;
+          const flaky   = stats.flaky;
+          const suite   = process.env.SUITE_NAME ?? 'Tests';
+
+          const icon   = failed > 0 ? '❌' : '✅';
+          const status = failed > 0 ? 'FAILED' : 'PASSED';
+
+          const lines = [];
+          lines.push(`## ${icon} Frndly TV — ${suite} ${status}`);
+          lines.push('');
+          lines.push('| ✅ Passed | ❌ Failed | ⏭️ Skipped | 🔁 Flaky | 📋 Total |');
+          lines.push('|:---:|:---:|:---:|:---:|:---:|');
+          lines.push(`| ${passed} | ${failed} | ${skipped} | ${flaky} | ${total} |`);
+          lines.push('');
+
+          if (failed > 0) {
+            lines.push('### ❌ Failures');
+            suites.filter(s => s.status === 'failed').forEach(s => {
+              lines.push(`- **${s.title}** (${(s.duration/1000).toFixed(1)} s)`);
+            });
+            lines.push('');
+          }
+
+          if (flaky > 0) {
+            lines.push('### 🔁 Flaky Tests (passed on retry)');
+            suites.filter(s => s.status === 'flaky').forEach(s => {
+              lines.push(`- ${s.title}`);
+            });
+            lines.push('');
+          }
+
+          if (skipped > 0) {
+            lines.push('<details><summary>⏭️ Skipped tests (DRM / account-specific rows)</summary>');
+            lines.push('');
+            suites.filter(s => s.status === 'skipped').forEach(s => {
+              lines.push(`- ${s.title}`);
+            });
+            lines.push('');
+            lines.push('</details>');
+            lines.push('');
+          }
+
+          lines.push(`> 📄 Download the **playwright-report-regression** artifact above for full videos, screenshots, and TTFF measurements.`);
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
+          console.log('Executive summary written.');
+          EOF
+
+      - name: Upload Playwright report (regression)
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report-regression
+          path: playwright/playwright-report/
+          retention-days: 30
+
+      - name: Upload test artifacts (regression)
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: test-results-regression
           path: playwright/test-results/
           retention-days: 7

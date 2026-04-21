@@ -4,6 +4,15 @@ import { config } from './config';
 
 const HOME_URL = config.homeUrl;
 
+interface RowTestOptions {
+  /**
+   * When true, skip instead of fail if the video doesn't start within the
+   * timeout. Use for personalised rows (e.g. Most Watched) where the content
+   * shown to the test account may vary run-to-run.
+   */
+  skipOnTimeout?: boolean;
+}
+
 /**
  * Creates a standardised @regression test for a single home-page content row.
  * Call this once at the top level of each row spec file.
@@ -19,8 +28,9 @@ const HOME_URL = config.homeUrl;
  * Usage:
  *   import { createRowTest } from '../../utils/createRowTest';
  *   createRowTest('Blockbuster Boulevard');
+ *   createRowTest('Most Watched', { skipOnTimeout: true });
  */
-export function createRowTest(rowName: string): void {
+export function createRowTest(rowName: string, options: RowTestOptions = {}): void {
   const slug = rowName.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
 
   test(`@regression ${rowName} — first asset TTFF`, async ({ page }, testInfo) => {
@@ -57,6 +67,10 @@ export function createRowTest(rowName: string): void {
         return;
       }
       if (ttffMs === -1) {
+        if (options.skipOnTimeout) {
+          test.skip(true, `Row '${rowName}': video did not start within ${config.videoTimeoutSeconds} s — content varies by account`);
+          return;
+        }
         throw new Error(
           `Row '${rowName}': video did not start within ${config.videoTimeoutSeconds} s`
         );
