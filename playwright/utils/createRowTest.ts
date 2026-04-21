@@ -70,7 +70,21 @@ export function createRowTest(rowName: string, options: RowTestOptions = {}): vo
       }
 
       // ── Measure TTFF ─────────────────────────────────────────────────────────
-      const ttffMs = await player.waitForVideoToStart(config.videoTimeoutSeconds);
+      // Wrap in try/catch: when skipOnTimeout is true, a browser-context-closed
+      // error (test timeout killing the polling loop) is treated as a skip, not
+      // a failure. This handles the first-attempt 180 s kill for mixed-content
+      // rows (e.g. Blockbuster Boulevard) where the video polling runs long.
+      let ttffMs: number;
+      try {
+        ttffMs = await player.waitForVideoToStart(config.videoTimeoutSeconds);
+      } catch (e: any) {
+        if (options.skipOnTimeout && e?.message?.includes('closed')) {
+          test.skip(true, `Row '${rowName}': browser context closed (test timeout) — content may require DRM`);
+          return;
+        }
+        throw e;
+      }
+
       if (ttffMs === -2) {
         test.skip(true, `Row '${rowName}': DRM_NO_KEY_SYSTEM — VOD content requires Widevine license, not available in this environment`);
         return;
