@@ -262,25 +262,33 @@ def heatmap():
     return fig
 
 def year_over_year():
-    yoy = df.groupby(['year', 'theme']).size().reset_index(name='count')
+    # Pivot so every year has a value for every theme (0 where absent)
+    pivot = df.groupby(['year', 'theme']).size().unstack(fill_value=0)
     themes_ordered = df.groupby('theme').size().sort_values(ascending=False).index.tolist()
+    years = [str(y) for y in pivot.index.tolist()]
+
     fig = go.Figure()
     for theme in themes_ordered:
-        sub = yoy[yoy['theme'] == theme]
+        vals = pivot[theme].tolist() if theme in pivot.columns else [0] * len(years)
         fig.add_trace(go.Bar(
-            x=sub['year'].astype(str), y=sub['count'],
+            x=years, y=vals,
             name=theme, marker_color=THEME_COLORS.get(theme, '#95A5A6'),
+            hovertemplate=f'<b>{theme}</b><br>%{{x}}: %{{y}} incidents<extra></extra>',
         ))
+
+    # Total labels above each bar group
     totals = df.groupby('year').size()
     for yr, tot in totals.items():
-        fig.add_annotation(x=str(yr), y=tot + 0.3, text=f"<b>{tot}</b>",
-                           showarrow=False, font_color='#E0E0E0', font_size=14)
+        fig.add_annotation(x=str(yr), y=tot + 0.4, text=f"<b>{tot}</b>",
+                           showarrow=False, font_color='#E0E0E0', font_size=15)
+
     fig.update_layout(
-        barmode='stack', title='Year-over-Year by Theme',
+        barmode='stack', title='Year-over-Year Incidents by Theme',
         template=TEMPLATE, paper_bgcolor=PAPER_BG, plot_bgcolor=PLOT_BG,
         xaxis_title='Year', yaxis_title='Incidents',
-        legend=dict(orientation='h', y=-0.3, x=0),
-        margin=dict(l=10, r=10, t=50, b=120), height=420,
+        xaxis=dict(type='category'),
+        legend=dict(orientation='h', y=-0.25, x=0),
+        margin=dict(l=10, r=10, t=50, b=100), height=420,
     )
     return fig
 
@@ -304,43 +312,55 @@ def cumulative_chart():
     )
     return fig
 
-def incident_table():
-    tbl = df[['id','date','theme','severity','devices','ticket','summary','blocker','recur']].copy()
-    tbl['date'] = tbl['date'].dt.strftime('%Y-%m-%d')
-    tbl['blocker'] = tbl['blocker'].map({True: '⛔', False: ''})
-    tbl['recur']   = tbl['recur'].map({True: '🔁', False: ''})
-    tbl['ticket']  = tbl['ticket'].apply(
-        lambda t: f'<a href="https://roku.atlassian.net/browse/{t}" target="_blank">{t}</a>' if t else ''
-    )
-    sev_emoji = {'Blocker': '🔴', 'Critical': '🟠', 'High': '🟡', 'Various': '⚪'}
-    tbl['severity'] = tbl['severity'].map(lambda s: f"{sev_emoji.get(s,'')} {s}")
+def incident_table_html():
+    """Returns a plain HTML table so Jira ticket links are fully clickable."""
+    SEV_EMOJI  = {'Blocker': '🔴', 'Critical': '🟠', 'High': '🟡', 'Various': '⚪'}
+    SEV_BG     = {'Blocker': '#2D0A0A', 'Critical': '#2D1A0A', 'High': '#1A1A0D', 'Various': PLOT_BG}
+    JIRA_BASE  = 'https://roku.atlassian.net/browse/'
 
-    cell_colors = []
-    for _, row in tbl.iterrows():
-        if '🔴' in str(row['severity']):
-            cell_colors.append(['#2D0A0A'] * len(tbl.columns))
-        elif '🟠' in str(row['severity']):
-            cell_colors.append(['#2D1A0A'] * len(tbl.columns))
-        else:
-            cell_colors.append([PLOT_BG] * len(tbl.columns))
+    rows = []
+    for _, r in df.sort_values('date').iterrows():
+        ticket_html = (
+            f'<a href="{JIRA_BASE}{r["ticket"]}" target="_blank" '
+            f'style="color:#58A6FF;text-decoration:none">{r["ticket"]}</a>'
+            if r['ticket'] else ''
+        )
+        theme_color = THEME_COLORS.get(r['theme'], '#95A5A6')
+        bg = SEV_BG.get(r['severity'], PLOT_BG)
+        rows.append(f"""
+          <tr style="background:{bg}">
+            <td style="color:#8B949E">{int(r['id'])}</td>
+            <td style="white-space:nowrap">{r['date'].strftime('%Y-%m-%d')}</td>
+            <td style="color:{theme_color};white-space:nowrap">{r['theme']}</td>
+            <td style="white-space:nowrap">{SEV_EMOJI.get(r['severity'],'')} {r['severity']}</td>
+            <td style="white-space:nowrap">{r['devices']}</td>
+            <td style="white-space:nowrap">{ticket_html}</td>
+            <td>{r['summary']}</td>
+            <td style="text-align:center">{'⛔' if r['blocker'] else ''}</td>
+            <td style="text-align:center">{'🔁' if r['recur'] else ''}</td>
+          </tr>""")
 
-    fig = go.Figure(go.Table(
-        header=dict(
-            values=['#', 'Date', 'Theme', 'Severity', 'Devices', 'Ticket', 'Summary', 'B', 'R'],
-            fill_color='#21262D', font_color='#E0E0E0', font_size=12,
-            align='left', height=36,
-        ),
-        cells=dict(
-            values=[tbl[c].tolist() for c in tbl.columns],
-            fill_color=list(map(list, zip(*cell_colors))),
-            font_color='#C0C8D4', font_size=11, align='left', height=30,
-        ),
-    ))
-    fig.update_layout(
-        template=TEMPLATE, paper_bgcolor=PAPER_BG,
-        margin=dict(l=0, r=0, t=10, b=0), height=900,
-    )
-    return fig
+    return f"""
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse;font-size:0.82rem;color:#C0C8D4">
+  <thead>
+    <tr style="background:#21262D;color:#E0E0E0;text-align:left">
+      <th style="padding:10px 8px">#</th>
+      <th style="padding:10px 8px">Date</th>
+      <th style="padding:10px 8px">Theme</th>
+      <th style="padding:10px 8px">Severity</th>
+      <th style="padding:10px 8px">Devices</th>
+      <th style="padding:10px 8px">Ticket</th>
+      <th style="padding:10px 8px">Summary</th>
+      <th style="padding:10px 8px">B</th>
+      <th style="padding:10px 8px">R</th>
+    </tr>
+  </thead>
+  <tbody>
+    {''.join(rows)}
+  </tbody>
+</table>
+</div>"""
 
 # ── Render charts to HTML strings ─────────────────────────────────────────────
 def to_div(fig, include_js=False):
@@ -356,7 +376,7 @@ fig_recur    = to_div(recurrence_chart())
 fig_heat     = to_div(heatmap())
 fig_yoy      = to_div(year_over_year())
 fig_cumul    = to_div(cumulative_chart())
-fig_table    = to_div(incident_table())
+fig_table    = incident_table_html()   # plain HTML table — supports clickable Jira links
 
 # ── HTML template ──────────────────────────────────────────────────────────────
 html = f"""<!DOCTYPE html>
@@ -499,7 +519,7 @@ html = f"""<!DOCTYPE html>
 <!-- Full incident table -->
 <div class="section">
   <h2>All Incidents &nbsp;<span class="tag-blocker">⛔ Blocker</span> &nbsp;<span class="tag-recur">🔁 Recurring</span></h2>
-  <div class="card full">{fig_table}</div>
+  <div class="card full" style="padding:12px">{fig_table}</div>
 </div>
 
 <footer>FrndlyTV / YuppTV RCA Dashboard &nbsp;·&nbsp; Generated {last_updated} &nbsp;·&nbsp; <a href="https://roku.atlassian.net/wiki/spaces/FPM/pages/1149815420" style="color:#58A6FF">View source in Confluence</a></footer>
