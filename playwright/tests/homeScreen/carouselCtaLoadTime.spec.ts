@@ -150,12 +150,22 @@ test.describe('Home Screen', () => {
 
       for (const { scope, ctaSel } of scopedSearches) {
         const found = await page.evaluate(({ scopeSel, cta }) => {
+          // `:has-text()` is Playwright-only — resolve it manually in the browser.
+          function findEl(root: Element | Document, sel: string): HTMLElement | null {
+            const m = sel.match(/^([^:]*)?:has-text\("([^"]+)"\)$/);
+            if (m) {
+              const tag = m[1] || '*';
+              const text = m[2].toLowerCase();
+              return (Array.from(root.querySelectorAll(tag)) as HTMLElement[])
+                .find(el => el.innerText?.trim().toLowerCase().includes(text)) ?? null;
+            }
+            return root.querySelector(sel) as HTMLElement | null;
+          }
           const root = scopeSel ? document.querySelector(scopeSel) : document;
           if (!root) return false;
-          const el = root.querySelector(cta) as HTMLElement | null;
+          const el = findEl(root, cta);
           if (!el) return false;
           const rect = el.getBoundingClientRect();
-          // Must be in the top portion of the page (hero area) and visible
           return rect.top < 700 && rect.width > 0 && rect.height > 0;
         }, { scopeSel: scope, cta: ctaSel });
 
@@ -173,9 +183,18 @@ test.describe('Home Screen', () => {
 
       // Scroll the CTA into view
       await page.evaluate(({ scopeSel, cta }) => {
+        function findEl(root: Element | Document, sel: string): HTMLElement | null {
+          const m = sel.match(/^([^:]*)?:has-text\("([^"]+)"\)$/);
+          if (m) {
+            const tag = m[1] || '*';
+            const text = m[2].toLowerCase();
+            return (Array.from(root.querySelectorAll(tag)) as HTMLElement[])
+              .find(el => el.innerText?.trim().toLowerCase().includes(text)) ?? null;
+          }
+          return root.querySelector(sel) as HTMLElement | null;
+        }
         const root = scopeSel ? document.querySelector(scopeSel) : document;
-        const el = root?.querySelector(cta) as HTMLElement | null;
-        el?.scrollIntoView({ block: 'center' });
+        findEl(root!, cta)?.scrollIntoView({ block: 'center' });
       }, { scopeSel: ctaHandle.scopeSelector, cta: ctaHandle.selector });
 
       await page.waitForTimeout(300);
@@ -184,9 +203,18 @@ test.describe('Home Screen', () => {
       const t0 = Date.now();
 
       await page.evaluate(({ scopeSel, cta }) => {
+        function findEl(root: Element | Document, sel: string): HTMLElement | null {
+          const m = sel.match(/^([^:]*)?:has-text\("([^"]+)"\)$/);
+          if (m) {
+            const tag = m[1] || '*';
+            const text = m[2].toLowerCase();
+            return (Array.from(root.querySelectorAll(tag)) as HTMLElement[])
+              .find(el => el.innerText?.trim().toLowerCase().includes(text)) ?? null;
+          }
+          return root.querySelector(sel) as HTMLElement | null;
+        }
         const root = scopeSel ? document.querySelector(scopeSel) : document;
-        const el = root?.querySelector(cta) as HTMLElement | null;
-        el?.click();
+        findEl(root!, cta)?.click();
       }, { scopeSel: ctaHandle.scopeSelector, cta: ctaHandle.selector });
 
       // ── Step 5: Wait for folio / detail page to appear ───────────────────
