@@ -48,7 +48,7 @@ jobs:
           WATCH_URL: ${{ secrets.WATCH_URL }}
           USERNAME: ${{ secrets.FRNDLY_USERNAME }}
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
-          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '5' }}
+          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
 
       - name: Write executive summary
@@ -221,7 +221,7 @@ jobs:
           WATCH_URL: ${{ secrets.WATCH_URL }}
           USERNAME: ${{ secrets.FRNDLY_USERNAME }}
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
-          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '5' }}
+          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
 
       - name: Write executive summary
@@ -372,7 +372,7 @@ jobs:
           WATCH_URL: ${{ secrets.WATCH_URL }}
           USERNAME: ${{ secrets.FRNDLY_USERNAME }}
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
-          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '5' }}
+          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
 
       - name: Write executive summary

@@ -20,6 +20,6 @@ export const config = {
   homeUrl:             optional('WATCH_URL', 'https://watch.frndlytv.com') + '/home',
   username:            required('USERNAME'),
   password:            required('PASSWORD'),
-  videoPlaySeconds:    parseInt(optional('VIDEO_PLAY_SECONDS', '5'), 10),
+  videoPlaySeconds:    parseInt(optional('VIDEO_PLAY_SECONDS', '25'), 10),
   videoTimeoutSeconds: parseInt(optional('VIDEO_TIMEOUT_SECONDS', '30'), 10),
 } as const;
