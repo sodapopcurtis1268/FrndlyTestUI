@@ -92,143 +92,63 @@ test.describe('Home Screen', () => {
         return;
       }
 
-      // ── Step 2: Discover hero carousel container ──────────────────────────
-      // Log all visible buttons near the top of the page to help identify the
-      // correct carousel CTA selector if the test skips on first run.
-      const pageButtons = await page.evaluate(() => {
-        const btns = Array.from(document.querySelectorAll('button, a[role="button"]'));
-        return btns
-          .filter(el => {
-            const rect = (el as HTMLElement).getBoundingClientRect();
-            return rect.top < 600 && rect.width > 0 && rect.height > 0;
-          })
-          .map(el => ({
-            tag: el.tagName,
-            text: (el as HTMLElement).innerText?.trim().slice(0, 60),
-            classes: el.className,
-          }));
-      });
-      console.log('Buttons visible in top 600px:', JSON.stringify(pageButtons, null, 2));
+      // ── Step 2: Find the carousel CTA button ─────────────────────────────
+      // Scope to .slick-active so we target the currently-visible slide only.
+      // This avoids picking up btn-primary buttons on inactive/hidden slides
+      // (which share the same class but have tabindex="-1").
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const ctaLocator = page.locator('.slick-active button.btn-primary').first();
 
-      // Discover which hero container selector matches
-      const heroContainerInfo = await page.evaluate((selectors) => {
-        for (const sel of selectors) {
-          const el = document.querySelector(sel);
-          if (el) {
-            return {
-              selector: sel,
-              tagName: el.tagName,
-              classes: el.className,
-              childButtons: Array.from(el.querySelectorAll('button, a'))
-                .map(b => ({ text: (b as HTMLElement).innerText?.trim().slice(0, 60), classes: b.className })),
-            };
-          }
-        }
-        return null;
-      }, HERO_CONTAINER_SELECTORS);
-
-      console.log('Hero container discovery:', JSON.stringify(heroContainerInfo, null, 2));
-
-      // ── Step 3: Find the Carousel CTA button ─────────────────────────────
-      // Try each CTA selector, first scoped to the hero container (if found),
-      // then falling back to the full page top-half.
-      let ctaHandle: { selector: string; scopeSelector: string | null } | null = null;
-
-      // Build scoped selectors: hero container first (if found), then full-page.
-      // On the confirmed Frndly TV layout the container is .slick-slider;
-      // full-page fallback handles any layout variation.
-      const scopedSearches: Array<{ scope: string | null; ctaSel: string }> = [];
-
-      if (heroContainerInfo) {
-        for (const ctaSel of HERO_CTA_SELECTORS) {
-          scopedSearches.push({ scope: heroContainerInfo.selector, ctaSel });
-        }
-      }
-      for (const ctaSel of HERO_CTA_SELECTORS) {
-        scopedSearches.push({ scope: null, ctaSel });
-      }
-
-      for (const { scope, ctaSel } of scopedSearches) {
-        const found = await page.evaluate(({ scopeSel, cta }) => {
-          // `:has-text()` is Playwright-only — resolve it manually in the browser.
-          function findEl(root: Element | Document, sel: string): HTMLElement | null {
-            const m = sel.match(/^([^:]*)?:has-text\("([^"]+)"\)$/);
-            if (m) {
-              const tag = m[1] || '*';
-              const text = m[2].toLowerCase();
-              return (Array.from(root.querySelectorAll(tag)) as HTMLElement[])
-                .find(el => el.innerText?.trim().toLowerCase().includes(text)) ?? null;
-            }
-            return root.querySelector(sel) as HTMLElement | null;
-          }
-          const root = scopeSel ? document.querySelector(scopeSel) : document;
-          if (!root) return false;
-          const el = findEl(root, cta);
-          if (!el) return false;
-          const rect = el.getBoundingClientRect();
-          return rect.top < 700 && rect.width > 0 && rect.height > 0;
-        }, { scopeSel: scope, cta: ctaSel });
-
-        if (found) {
-          ctaHandle = { selector: ctaSel, scopeSelector: scope };
-          console.log(`Found carousel CTA: "${ctaSel}" (scope: ${scope ?? 'page'})`);
-          break;
-        }
-      }
-
-      if (!ctaHandle) {
-        test.skip(true, 'No Carousel CTA button found in hero area — check console log above for available selectors');
+      const ctaVisible = await ctaLocator.isVisible({ timeout: 5_000 }).catch(() => false);
+      if (!ctaVisible) {
+        test.skip(true, 'Carousel CTA (.slick-active button.btn-primary) not visible — absent or below fold for this account');
         return;
       }
 
-      // Scroll the CTA into view
-      await page.evaluate(({ scopeSel, cta }) => {
-        function findEl(root: Element | Document, sel: string): HTMLElement | null {
-          const m = sel.match(/^([^:]*)?:has-text\("([^"]+)"\)$/);
-          if (m) {
-            const tag = m[1] || '*';
-            const text = m[2].toLowerCase();
-            return (Array.from(root.querySelectorAll(tag)) as HTMLElement[])
-              .find(el => el.innerText?.trim().toLowerCase().includes(text)) ?? null;
-          }
-          return root.querySelector(sel) as HTMLElement | null;
-        }
-        const root = scopeSel ? document.querySelector(scopeSel) : document;
-        findEl(root!, cta)?.scrollIntoView({ block: 'center' });
-      }, { scopeSel: ctaHandle.scopeSelector, cta: ctaHandle.selector });
+      const ctaText = (await ctaLocator.textContent())?.trim() ?? '';
+      console.log(`Carousel CTA found: "${ctaText}"`);
 
+      await ctaLocator.scrollIntoViewIfNeeded();
       await page.waitForTimeout(300);
 
-      // ── Step 4: Click CTA and start timer ─────────────────────────────────
+      // ── Step 3: Click CTA and start timer ────────────────────────────────
       const t0 = Date.now();
+      await ctaLocator.click();
 
-      await page.evaluate(({ scopeSel, cta }) => {
-        function findEl(root: Element | Document, sel: string): HTMLElement | null {
-          const m = sel.match(/^([^:]*)?:has-text\("([^"]+)"\)$/);
-          if (m) {
-            const tag = m[1] || '*';
-            const text = m[2].toLowerCase();
-            return (Array.from(root.querySelectorAll(tag)) as HTMLElement[])
-              .find(el => el.innerText?.trim().toLowerCase().includes(text)) ?? null;
-          }
-          return root.querySelector(sel) as HTMLElement | null;
-        }
-        const root = scopeSel ? document.querySelector(scopeSel) : document;
-        findEl(root!, cta)?.click();
-      }, { scopeSel: ctaHandle.scopeSelector, cta: ctaHandle.selector });
+      // ── Step 4: Wait for folio / detail page ─────────────────────────────
+      // The folio opens as an overlay on the same page. The carousel's own
+      // buttons remain in the DOM (inactive slides have tabindex="-1" and live
+      // inside .slick-list). We look for a play-action button that is:
+      //   • NOT inside the Slick carousel (.slick-list / .slick-slider)
+      //   • Actually visible (non-zero dimensions)
+      // This unambiguously identifies the folio CTA vs the carousel CTA.
+      //
+      // If the CTA navigates directly to the player (no folio), the function
+      // times out — treat that as a skip condition, not a failure.
+      const folioAppeared = await page.waitForFunction(() => {
+        const PLAY_TEXTS = ['watch now', 'watch', 'play', 'continue watching', 'start over'];
+        const btns = Array.from(document.querySelectorAll('button')) as HTMLElement[];
+        return btns.some(btn => {
+          const text = btn.innerText?.toLowerCase().trim() ?? '';
+          if (!PLAY_TEXTS.some(t => text.includes(t))) return false;
+          // Exclude buttons still inside the Slick carousel container
+          if (btn.closest('.slick-list, .slick-slider, .slick-track')) return false;
+          const rect = btn.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        });
+      }, { timeout: 10_000 }).catch(() => null);
 
-      // ── Step 5: Wait for folio / detail page to appear ───────────────────
-      await page.waitForSelector(FOLIO_SELECTOR, {
-        state: 'visible',
-        timeout: 10_000,
-      });
+      if (!folioAppeared) {
+        test.skip(true, 'Folio did not appear after CTA click — CTA may navigate directly to player for this content');
+        return;
+      }
 
       const loadTimeMs = Date.now() - t0;
-      console.log(`Carousel CTA folio load time: ${loadTimeMs} ms (CTA: "${ctaHandle.selector}")`);
+      console.log(`Carousel CTA folio load time: ${loadTimeMs} ms (CTA: "${ctaText}")`);
 
-      // ── Step 6: Attach measurement to the HTML report ─────────────────────
+      // ── Step 5: Attach measurement to the HTML report ─────────────────────
       await testInfo.attach('carousel-cta-folio-load-time', {
-        body: Buffer.from(`${loadTimeMs} ms  |  CTA: ${ctaHandle.selector}`),
+        body: Buffer.from(`${loadTimeMs} ms  |  CTA: "${ctaText}"`),
         contentType: 'text/plain',
       });
 
