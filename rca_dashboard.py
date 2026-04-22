@@ -352,8 +352,8 @@ def incident_table_html():
       <th style="padding:10px 8px">Devices</th>
       <th style="padding:10px 8px">Ticket</th>
       <th style="padding:10px 8px">Summary</th>
-      <th style="padding:10px 8px">B</th>
-      <th style="padding:10px 8px">R</th>
+      <th style="padding:10px 8px">Blocker</th>
+      <th style="padding:10px 8px">Recurring</th>
     </tr>
   </thead>
   <tbody>
