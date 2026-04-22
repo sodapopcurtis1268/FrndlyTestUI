@@ -71,13 +71,13 @@ jobs:
 
             function walk(suite, parentPath) {
               if (!suite) return;
-              const path = [parentPath, suite.title].filter(Boolean).join(' → ');
+              const path = [parentPath, suite.title].filter(Boolean).join(' / ');
               (suite.suites ?? []).forEach(s => walk(s, path));
               (suite.specs ?? []).forEach(spec => {
                 spec.tests?.forEach(t => {
                   const status = t.results?.[0]?.status ?? 'unknown';
                   const duration = t.results?.[0]?.duration ?? 0;
-                  const title = [path, spec.title].filter(Boolean).join(' → ');
+                  const title = [path, spec.title].filter(Boolean).join(' / ');
                   suites.push({ title, status, duration });
                 });
               });
@@ -244,13 +244,13 @@ jobs:
 
             function walk(suite, parentPath) {
               if (!suite) return;
-              const path = [parentPath, suite.title].filter(Boolean).join(' → ');
+              const path = [parentPath, suite.title].filter(Boolean).join(' / ');
               (suite.suites ?? []).forEach(s => walk(s, path));
               (suite.specs ?? []).forEach(spec => {
                 spec.tests?.forEach(t => {
                   const status = t.results?.[0]?.status ?? 'unknown';
                   const duration = t.results?.[0]?.duration ?? 0;
-                  const title = [path, spec.title].filter(Boolean).join(' → ');
+                  const title = [path, spec.title].filter(Boolean).join(' / ');
                   suites.push({ title, status, duration });
                 });
               });
@@ -340,7 +340,7 @@ jobs:
   # ── Home Screen ────────────────────────────────────────────────────────────
   # Performance test: tile folio load time must be ≤ 2 seconds.
   homeScreen:
-    name: "Home Screen → Performance"
+    name: "Home Screen / Performance"
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -395,13 +395,13 @@ jobs:
 
             function walk(suite, parentPath) {
               if (!suite) return;
-              const path = [parentPath, suite.title].filter(Boolean).join(' → ');
+              const path = [parentPath, suite.title].filter(Boolean).join(' / ');
               (suite.suites ?? []).forEach(s => walk(s, path));
               (suite.specs ?? []).forEach(spec => {
                 spec.tests?.forEach(t => {
                   const status = t.results?.[0]?.status ?? 'unknown';
                   const duration = t.results?.[0]?.duration ?? 0;
-                  const title = [path, spec.title].filter(Boolean).join(' → ');
+                  const title = [path, spec.title].filter(Boolean).join(' / ');
                   suites.push({ title, status, duration });
                 });
               });
