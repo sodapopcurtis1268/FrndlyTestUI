@@ -262,34 +262,44 @@ def heatmap():
     return fig
 
 def year_over_year():
-    # Pivot so every year has a value for every theme (0 where absent)
-    pivot = df.groupby(['year', 'theme']).size().unstack(fill_value=0)
-    themes_ordered = df.groupby('theme').size().sort_values(ascending=False).index.tolist()
-    years = [str(y) for y in pivot.index.tolist()]
+    # Quarterly granularity: 9 quarters across 2023–2025 gives a meaningful trend line
+    df['qtr_label'] = df['date'].dt.to_period('Q').astype(str)   # e.g. "2024Q3"
+    themes_ordered  = df.groupby('theme').size().sort_values(ascending=False).index.tolist()
 
-    fig = go.Figure()
-    for theme in themes_ordered:
-        vals = pivot[theme].tolist() if theme in pivot.columns else [0] * len(years)
-        fig.add_trace(go.Bar(
-            x=years, y=vals,
-            name=theme, marker_color=THEME_COLORS.get(theme, '#95A5A6'),
-            hovertemplate=f'<b>{theme}</b><br>%{{x}}: %{{y}} incidents<extra></extra>',
-        ))
+    # Build a complete grid: every quarter × every theme
+    all_qtrs   = sorted(df['qtr_label'].unique())
+    rows = []
+    for qtr in all_qtrs:
+        sub = df[df['qtr_label'] == qtr]
+        for theme in themes_ordered:
+            rows.append({'Quarter': qtr, 'Theme': theme,
+                         'Incidents': int((sub['theme'] == theme).sum())})
+    grid = pd.DataFrame(rows)
 
-    # Total labels above each bar group
-    totals = df.groupby('year').size()
-    for yr, tot in totals.items():
-        fig.add_annotation(x=str(yr), y=tot + 0.4, text=f"<b>{tot}</b>",
-                           showarrow=False, font_color='#E0E0E0', font_size=15)
+    import plotly.express as px
+    fig = px.bar(
+        grid, x='Quarter', y='Incidents', color='Theme',
+        color_discrete_map=THEME_COLORS,
+        category_orders={'Theme': themes_ordered},
+        barmode='stack',
+        title='Quarterly Incidents by Theme',
+        template=TEMPLATE,
+        text_auto=False,
+    )
+
+    # Quarterly totals above each bar
+    qtotals = df.groupby('qtr_label').size()
+    for qtr, tot in qtotals.items():
+        fig.add_annotation(x=qtr, y=tot + 0.2, text=f"<b>{tot}</b>",
+                           showarrow=False, font_color='#E0E0E0', font_size=11)
 
     fig.update_layout(
-        barmode='stack', title='Year-over-Year Incidents by Theme',
-        template=TEMPLATE, paper_bgcolor=PAPER_BG, plot_bgcolor=PLOT_BG,
-        xaxis_title='Year', yaxis_title='Incidents',
-        xaxis=dict(type='category'),
-        legend=dict(orientation='h', y=-0.25, x=0),
-        margin=dict(l=10, r=10, t=50, b=100), height=420,
+        paper_bgcolor=PAPER_BG, plot_bgcolor=PLOT_BG,
+        xaxis_title='Quarter', yaxis_title='Incidents',
+        legend=dict(orientation='h', y=-0.3, x=0, title=''),
+        margin=dict(l=10, r=10, t=50, b=110), height=440,
     )
+    fig.update_traces(marker_line_width=0)
     return fig
 
 def cumulative_chart():
