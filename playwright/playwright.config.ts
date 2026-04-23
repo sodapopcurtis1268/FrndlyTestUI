@@ -109,6 +109,21 @@ export default defineConfig({
       dependencies: ['setup'],
     },
 
+    // ── Player suite ─────────────────────────────────────────────────────────
+    // Functional tests for video player features (CC, playback controls, etc.)
+    //   npx playwright test --project=player
+    {
+      name: 'player',
+      testMatch: /\/player\/.*\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+        storageState: '.auth/user.json',
+        video: 'on',
+      },
+      dependencies: ['setup'],
+    },
+
     // Uncomment to add cross-browser coverage:
     // { name: 'smoke-firefox',     testMatch: /\/(liveNow|trendingMovies|frndlyTV)\.spec\.ts/,     use: { ...devices['Desktop Firefox'], storageState: '.auth/user.json' }, dependencies: ['setup'] },
     // { name: 'regression-webkit', testMatch: /\/(homePageRows|assetPlayback)\.spec\.ts/, use: { ...devices['Desktop Safari'],  storageState: '.auth/user.json' }, dependencies: ['setup'] },
