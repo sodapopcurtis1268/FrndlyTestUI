@@ -43,7 +43,8 @@ const CC_BUTTON_SELECTORS = [
 ];
 
 // Selectors used to identify clickable channel items in the guide.
-// Logged on first run — extend this list once the real selector is known.
+// Ordered from most-specific to most-generic. The first selector that
+// returns items NOT containing a time_bar/rt_controls header wins.
 const CHANNEL_ITEM_SELECTORS = [
   '[class*="guide-row"]',
   '[class*="channel-row"]',
@@ -54,7 +55,13 @@ const CHANNEL_ITEM_SELECTORS = [
   '[class*="guide-cell"]',
   '[class*="guide_row"]',
   '[class*="channel_row"]',
+  '[class*="chnl_row"]',
+  '[class*="chnl-row"]',
+  '[class*="prog_row"]',
+  '[class*="channel_wrap"]',
+  '[class*="channel-wrap"]',
   'li[class*="channel"]',
+  'li[class*="chnl"]',
   'div[class*="channel"]',
 ];
 
@@ -91,92 +98,178 @@ test.describe('Guide', () => {
         return;
       }
 
-      // ── Step 2: Discover the channel item selector ────────────────────────
-      // Log guide structure on first run so unknown selectors can be identified
+      // ── Step 2: Dump guide container HTML for structure discovery ────────────
+      const guideContainerHtml = await page.evaluate(() => {
+        // Try to find the guide's outermost container
+        const candidates = [
+          '[class*="guide_container"]', '[class*="guide-container"]',
+          '[class*="guide_wrap"]',      '[class*="guide-wrap"]',
+          '[class*="epg"]',             '[id*="guide"]',
+          '[class*="guide_page"]',      '[class*="guide-page"]',
+          '[class*="channel_guide"]',   '[class*="channel-guide"]',
+        ];
+        for (const sel of candidates) {
+          const el = document.querySelector(sel);
+          if (el) return `[${sel}] ${el.outerHTML.slice(0, 2000)}`;
+        }
+        // Fallback: dump body start
+        return `[body] ${document.body.innerHTML.slice(0, 2000)}`;
+      });
+      console.log('Guide container HTML:', guideContainerHtml);
+
+      // ── Step 3: Find all channel links (href-based, most reliable) ─────────
+      // If the guide renders channels as <a href="/..."> links we can navigate
+      // directly — far more reliable than clicking row divs.
+      const channelLinks: Array<{ href: string; name: string }> = await page.evaluate(() => {
+        const links = Array.from(document.querySelectorAll('a[href]')) as HTMLAnchorElement[];
+        return links
+          .filter(a => {
+            const h = a.href;
+            return h.includes('/live') || h.includes('/channel') || h.includes('/watch/');
+          })
+          .map(a => ({
+            href: a.href,
+            name: a.innerText?.trim().replace(/\n.*/s, '').slice(0, 60)
+              || a.getAttribute('aria-label')?.slice(0, 60)
+              || a.title?.slice(0, 60)
+              || '',
+          }))
+          // deduplicate by href
+          .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i)
+          .slice(0, 100);
+      });
+
+      console.log(`Channel links found: ${channelLinks.length}`);
+      if (channelLinks.length > 0) {
+        console.log('Sample links:', JSON.stringify(channelLinks.slice(0, 5), null, 2));
+      }
+
+      // ── Step 4: Discover the best DOM selector for channel rows ───────────
       const guideStructure = await page.evaluate((selectors) => {
-        return selectors.map(sel => ({
-          selector: sel,
-          count: document.querySelectorAll(sel).length,
-          sample: (document.querySelector(sel) as HTMLElement)?.innerText?.trim().slice(0, 60) ?? '',
-        })).filter(s => s.count > 0);
+        return selectors.map(sel => {
+          const els = Array.from(document.querySelectorAll(sel)) as HTMLElement[];
+          // Filter out header/time-bar divs — real channel rows won't contain
+          // the time_bar_inner element or the rt_controls arrows.
+          const filtered = els.filter(el =>
+            !el.querySelector('#time_bar_inner, .time_bar, .rt_controls')
+          );
+          return {
+            selector: sel,
+            total:    els.length,
+            count:    filtered.length,
+            sample:   filtered[0]?.innerText?.trim().slice(0, 60) ?? '',
+            outerTag: filtered[0]?.outerHTML?.slice(0, 200) ?? '',
+          };
+        }).filter(s => s.count > 0);
       }, CHANNEL_ITEM_SELECTORS);
 
-      console.log('Guide structure discovery:', JSON.stringify(guideStructure, null, 2));
+      console.log('Guide structure discovery (filtered):', JSON.stringify(guideStructure, null, 2));
 
-      // Pick the selector that found the most items (most likely the channel rows)
+      // Pick the selector with the most non-header channel rows
       const bestSelector = guideStructure.sort((a, b) => b.count - a.count)[0];
 
-      if (!bestSelector) {
-        test.skip(true, 'No channel items found in guide — check CHANNEL_ITEM_SELECTORS list');
+      if (!bestSelector && channelLinks.length === 0) {
+        test.skip(true, 'No channel items or links found in guide — check console HTML dump above');
         return;
       }
 
-      console.log(`Using selector: "${bestSelector.selector}" (${bestSelector.count} channels)`);
+      // ── Step 5: Build the channel list ────────────────────────────────────
+      // Prefer href-based list (navigate directly); fall back to DOM click list.
+      type ChannelEntry = { name: string; href?: string; index?: number };
+      let channels: ChannelEntry[] = [];
 
-      // ── Step 3: Collect channel names ─────────────────────────────────────
-      // Log the full inner structure of the first channel element so we can
-      // identify the correct child selector for the channel name.
-      const firstChannelHtml = await page.evaluate((sel) => {
-        const el = document.querySelector(sel);
-        return el ? el.innerHTML.slice(0, 600) : 'not found';
-      }, bestSelector.selector);
-      console.log('First channel element HTML:', firstChannelHtml);
+      if (channelLinks.length >= 5) {
+        // Use links directly — most reliable approach
+        channels = channelLinks.map((l, i) => ({
+          name:  l.name || `Channel ${i + 1}`,
+          href:  l.href,
+        }));
+        console.log(`Using href-based navigation for ${channels.length} channels`);
+      } else if (bestSelector) {
+        // Fall back to DOM index-based clicking
+        const names: string[] = await page.evaluate(
+          ({ sel }: { sel: string }) => {
+            const els = Array.from(document.querySelectorAll(sel)) as HTMLElement[];
+            const filtered = els.filter(el =>
+              !el.querySelector('#time_bar_inner, .time_bar, .rt_controls')
+            );
 
-      const channelNames: string[] = await page.evaluate((sel) => {
-        return Array.from(document.querySelectorAll(sel)).map((el, i) => {
-          const h = el as HTMLElement;
-          // Try common child selectors for channel name
-          const nameEl =
-            h.querySelector('[class*="channel-name"]') ??
-            h.querySelector('[class*="channel_name"]') ??
-            h.querySelector('[class*="channelName"]') ??
-            h.querySelector('[class*="channel-title"]') ??
-            h.querySelector('[class*="title"]') ??
-            h.querySelector('[class*="name"]') ??
-            h.querySelector('h3, h4, h5, strong, b');
+            // Log outerHTML of first 3 for debugging
+            filtered.slice(0, 3).forEach((el, i) =>
+              console.log(`[row ${i}] outerHTML:`, el.outerHTML.slice(0, 300))
+            );
 
-          if (nameEl) return (nameEl as HTMLElement).innerText?.trim() || `Channel ${i + 1}`;
+            return filtered.map((el, i) => {
+              const nameEl =
+                el.querySelector('[class*="channel-name"]') ??
+                el.querySelector('[class*="channel_name"]') ??
+                el.querySelector('[class*="channelName"]') ??
+                el.querySelector('[class*="channel-title"]') ??
+                el.querySelector('[class*="ch_name"]') ??
+                el.querySelector('[class*="chnl_name"]') ??
+                el.querySelector('[class*="title"]') ??
+                el.querySelector('[class*="name"]') ??
+                el.querySelector('h3, h4, h5, strong, b');
 
-          // Fallback: find the longest non-"LIVE"/"HD" token in innerText lines
-          const lines = h.innerText?.trim().split('\n').map(l => l.trim()).filter(Boolean) ?? [];
-          const best = lines.find(l => l.length > 2 && !['LIVE', 'HD', 'SD', '4K'].includes(l.toUpperCase()));
-          return best || `Channel ${i + 1}`;
-        });
-      }, bestSelector.selector);
+              if (nameEl) return (nameEl as HTMLElement).innerText?.trim() || `Channel ${i + 1}`;
 
-      console.log(`Found ${channelNames.length} channels`);
+              const lines = el.innerText?.trim().split('\n').map((l: string) => l.trim()).filter(Boolean) ?? [];
+              const best = lines.find((l: string) => l.length > 2 && !['LIVE', 'HD', 'SD', '4K'].includes(l.toUpperCase()));
+              return best || `Channel ${i + 1}`;
+            });
+          },
+          { sel: bestSelector.selector }
+        );
+        channels = names.map((name, i) => ({ name, index: i }));
+        console.log(`Using DOM click for ${channels.length} channels via "${bestSelector.selector}"`);
+      }
+
+      if (channels.length === 0) {
+        test.skip(true, 'Could not build channel list — check console output above');
+        return;
+      }
+
+      console.log(`Total channels to test: ${channels.length}`);
 
       const results: ChannelResult[] = [];
 
-      // ── Step 4: Test each channel ─────────────────────────────────────────
-      for (let i = 0; i < channelNames.length; i++) {
-        const channelName = channelNames[i];
+      // ── Step 6: Test each channel ─────────────────────────────────────────
+      for (let i = 0; i < channels.length; i++) {
+        const ch = channels[i];
         const result: ChannelResult = {
-          name:         channelName,
+          name:         ch.name,
           index:        i,
           videoStarted: false,
           ccAvailable:  false,
           ccActive:     false,
         };
 
-        console.log(`\n[${i + 1}/${channelNames.length}] Testing: "${channelName}"`);
+        console.log(`\n[${i + 1}/${channels.length}] Testing: "${ch.name}"`);
 
         try {
-          // Navigate to guide fresh for each channel (avoids stale DOM)
-          if (i > 0) {
-            await page.goto(guideUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-            await page.waitForFunction(
-              (sel) => document.querySelectorAll(sel).length > 0,
-              bestSelector.selector,
-              { timeout: 15_000 }
-            );
-          }
+          if (ch.href) {
+            // ── Href-based navigation (preferred) ──────────────────────────
+            await page.goto(ch.href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+          } else {
+            // ── DOM index-based click (fallback) ───────────────────────────
+            // Navigate to guide fresh for each channel (avoids stale DOM)
+            if (i > 0) {
+              await page.goto(guideUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+              await page.waitForFunction(
+                (sel: string) => document.querySelectorAll(sel).length > 0,
+                bestSelector!.selector,
+                { timeout: 15_000 }
+              );
+            }
 
-          // Click the channel item by index
-          const channelItem = page.locator(bestSelector.selector).nth(i);
-          await channelItem.scrollIntoViewIfNeeded();
-          await page.waitForTimeout(300);
-          await channelItem.click();
+            // Re-filter out header elements, then click by filtered index
+            const clickTarget = page.locator(bestSelector!.selector).filter({
+              hasNot: page.locator('#time_bar_inner, .time_bar, .rt_controls'),
+            }).nth(ch.index ?? i);
+            await clickTarget.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(300);
+            await clickTarget.click();
+          }
 
           // Handle folio overlay if it appears before the player
           const folioBtn = page.locator([
