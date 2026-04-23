@@ -174,11 +174,49 @@ test.describe('Guide', () => {
           .slice(0, 100);
       });
 
-      const channelLinks = [...domChannelLinks, ...apiChannels]
+      // Also look for Angular routerLink on non-<a> elements (div, img, etc.)
+      // Guide channel rows use routerlink="/partner/channel_slug" on a div —
+      // no href in the DOM — which is why <a> detection only finds 6 channels.
+      const routerLinkChannels: Array<{ href: string; name: string }> = await page.evaluate(() => {
+        const NAV_PATHS = new Set(['/', '/home', '/guide', '/movies', '/tv', '/my-stuff', '/add-ons', '/settings', '/search']);
+        const contentBody = document.querySelector('#content_body, .content_body') as HTMLElement | null;
+        const root = contentBody ?? document;
+        const els = Array.from(root.querySelectorAll('[routerlink]')) as HTMLElement[];
+        return els
+          .map(el => {
+            const path = el.getAttribute('routerlink') ?? '';
+            return {
+              href: `${window.location.origin}${path.startsWith('/') ? '' : '/'}${path}`,
+              // Derive readable name from slug if element has no visible text
+              name: el.innerText?.trim().replace(/\n[\s\S]*/g, '').slice(0, 60)
+                || path.replace(/^\/partner\//, '').replace(/_/g, ' ')
+                || path,
+              path,
+            };
+          })
+          .filter(x =>
+            x.path.length > 1 &&
+            !NAV_PATHS.has(x.path) &&
+            !x.path.startsWith('/settings') &&
+            !x.path.startsWith('/home') &&
+            !x.path.startsWith('/guide') &&
+            !x.path.startsWith('/movies') &&
+            !x.path.startsWith('/tv')
+          )
+          .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i)
+          .slice(0, 100);
+      });
+
+      console.log(`RouterLink channels: ${routerLinkChannels.length}`);
+      if (routerLinkChannels.length > 0) {
+        console.log('RouterLink sample:', JSON.stringify(routerLinkChannels.slice(0, 3), null, 2));
+      }
+
+      const channelLinks = [...domChannelLinks, ...routerLinkChannels, ...apiChannels]
         .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
 
-      console.log(`Channel links: dom=${domChannelLinks.length} api=${apiChannels.length} total=${channelLinks.length}`);
-      if (channelLinks.length > 0) {
+      console.log(`Channel links: dom=${domChannelLinks.length} router=${routerLinkChannels.length} api=${apiChannels.length} total=${channelLinks.length}`);
+      if (channelLinks.length > 0 && routerLinkChannels.length === 0) {
         console.log('Sample links:', JSON.stringify(channelLinks.slice(0, 5), null, 2));
       }
 
@@ -336,18 +374,24 @@ test.describe('Guide', () => {
             }
           }
 
-          // Handle folio overlay if it appears before the player
+          // Handle channel detail / folio page — /partner/* pages require
+          // clicking Watch before playback starts. Extend timeout to 12 s
+          // to give the Angular page time to render after navigation.
           const folioBtn = page.locator([
             'button:has-text("Watch Now")',
             'button:has-text("Watch Live")',
-            'button:has-text("Play")',
             'button:has-text("Watch")',
+            'button:has-text("Play")',
+            'a:has-text("Watch Now")',
+            'a:has-text("Watch Live")',
+            'a:has-text("Watch")',
           ].join(', ')).first();
 
-          const folioAppeared = await folioBtn.waitFor({ state: 'visible', timeout: 6_000 })
+          const folioAppeared = await folioBtn.waitFor({ state: 'visible', timeout: 12_000 })
             .then(() => true).catch(() => false);
 
           if (folioAppeared) {
+            console.log(`  🎬 Folio appeared — clicking watch button`);
             await folioBtn.click();
           }
 
