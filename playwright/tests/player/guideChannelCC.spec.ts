@@ -84,7 +84,32 @@ test.describe('Guide', () => {
 
       const guideUrl = config.watchUrl + '/guide';
 
-      // ── Step 1: Navigate to Guide ─────────────────────────────────────────
+      // ── Step 1: Navigate to Guide — intercept API responses for channel data
+      // Many OTT apps return channel lists via a JSON API; capture those so we
+      // can navigate to watch URLs directly instead of clicking DOM elements.
+      const apiChannels: Array<{ name: string; href: string }> = [];
+      page.on('response', async (response) => {
+        const url = response.url();
+        const ct  = response.headers()['content-type'] ?? '';
+        if (!ct.includes('json')) return;
+        // Only inspect responses that look like channel/guide APIs
+        if (!/channel|guide|epg|live|program/i.test(url)) return;
+        try {
+          const body = await response.json();
+          const items: any[] = Array.isArray(body) ? body
+            : (body.data ?? body.channels ?? body.items ?? body.results ?? []);
+          if (!Array.isArray(items) || items.length < 2) return;
+          console.log(`API hit: ${url.slice(0, 120)} — ${items.length} items`);
+          for (const item of items) {
+            const href  = item.watch_url ?? item.watchUrl ?? item.url
+                        ?? item.stream_url ?? item.streamUrl ?? '';
+            const name  = item.channel_name ?? item.channelName ?? item.name
+                        ?? item.title ?? '';
+            if (href && name) apiChannels.push({ name, href });
+          }
+        } catch { /* ignore parse errors */ }
+      });
+
       await page.goto(guideUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
       // Wait for the guide to render channel rows
@@ -117,29 +142,38 @@ test.describe('Guide', () => {
       });
       console.log('Guide container HTML:', guideContainerHtml);
 
-      // ── Step 3: Find all channel links (href-based, most reliable) ─────────
-      // If the guide renders channels as <a href="/..."> links we can navigate
-      // directly — far more reliable than clicking row divs.
-      const channelLinks: Array<{ href: string; name: string }> = await page.evaluate(() => {
+      // ── Step 3: Find channel links — DOM hrefs + intercepted API data ────────
+      const domChannelLinks: Array<{ href: string; name: string }> = await page.evaluate(() => {
         const links = Array.from(document.querySelectorAll('a[href]')) as HTMLAnchorElement[];
         return links
-          .filter(a => {
-            const h = a.href;
-            return h.includes('/live') || h.includes('/channel') || h.includes('/watch/');
-          })
+          .filter(a => /\/live|\/channel|\/watch\//i.test(a.href))
           .map(a => ({
             href: a.href,
-            name: a.innerText?.trim().replace(/\n.*/s, '').slice(0, 60)
+            name: a.innerText?.trim().replace(/\n[\s\S]*/g, '').slice(0, 60)
               || a.getAttribute('aria-label')?.slice(0, 60)
               || a.title?.slice(0, 60)
               || '',
           }))
-          // deduplicate by href
           .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i)
           .slice(0, 100);
       });
 
-      console.log(`Channel links found: ${channelLinks.length}`);
+      // Also look for Angular routerLink attributes pointing to live channels
+      const routerLinks: Array<{ href: string; name: string }> = await page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll('[routerlink],[ng-reflect-router-link]')) as HTMLElement[];
+        return els
+          .map(el => ({
+            href: el.getAttribute('routerlink') ?? el.getAttribute('ng-reflect-router-link') ?? '',
+            name: el.innerText?.trim().slice(0, 60) ?? '',
+          }))
+          .filter(x => /live|channel/i.test(x.href))
+          .slice(0, 100);
+      });
+
+      const channelLinks = [...domChannelLinks, ...routerLinks, ...apiChannels]
+        .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
+
+      console.log(`Channel links found: dom=${domChannelLinks.length} router=${routerLinks.length} api=${apiChannels.length} total=${channelLinks.length}`);
       if (channelLinks.length > 0) {
         console.log('Sample links:', JSON.stringify(channelLinks.slice(0, 5), null, 2));
       }
@@ -268,18 +302,34 @@ test.describe('Guide', () => {
               );
             }
 
-            // Re-filter out header elements, then click by filtered index.
-            // channel_img divs are empty background-image containers — the
-            // click handler is on the PARENT element, so we use evaluate to
-            // click parentElement (or the element itself if it has no parent).
-            const clickTarget = page.locator(bestSelector!.selector).filter({
-              hasNot: page.locator('#time_bar_inner, .time_bar, .rt_controls'),
-            }).nth(ch.index ?? i);
-            await clickTarget.scrollIntoViewIfNeeded();
+            // channel_img divs are empty CSS-image containers; the Angular
+            // click binding lives on the parent row. Use Playwright native
+            // click (real mouse events) on the XPath parent.
+            const channelImgLoc = page.locator('div.channel_img').nth(ch.index ?? i);
+            await channelImgLoc.scrollIntoViewIfNeeded();
             await page.waitForTimeout(300);
-            await clickTarget.evaluate((el: HTMLElement) => {
-              (el.parentElement ?? el).click();
-            });
+
+            // Try parent first, fall back to the img div itself
+            try {
+              await channelImgLoc.locator('xpath=..').click({ timeout: 5_000 });
+            } catch {
+              await channelImgLoc.click({ force: true, timeout: 3_000 }).catch(() => {});
+            }
+
+            // ── Diagnostic for first channel only ──────────────────────────
+            if (i === 0) {
+              await page.waitForTimeout(1_500);
+              console.log(`  [diag] URL after click: ${page.url()}`);
+              const visibleEls = await page.evaluate(() =>
+                Array.from(document.querySelectorAll('button, a[href], [role="button"]'))
+                  .filter(el => !!(el as HTMLElement).offsetParent)
+                  .map(el => `${el.tagName}: ${(el as HTMLElement).innerText?.trim().slice(0, 40) || el.getAttribute('aria-label') || ''}`)
+                  .filter(Boolean)
+                  .slice(0, 15)
+              );
+              console.log(`  [diag] Visible interactive elements:`, JSON.stringify(visibleEls));
+              await page.screenshot({ path: `screenshots/guide-ch1-after-click-${Date.now()}.png` }).catch(() => {});
+            }
           }
 
           // Handle folio overlay if it appears before the player
