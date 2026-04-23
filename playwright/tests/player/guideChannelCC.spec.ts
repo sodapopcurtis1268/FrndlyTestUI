@@ -89,22 +89,25 @@ test.describe('Guide', () => {
       // can navigate to watch URLs directly instead of clicking DOM elements.
       const apiChannels: Array<{ name: string; href: string }> = [];
       page.on('response', async (response) => {
-        const url = response.url();
-        const ct  = response.headers()['content-type'] ?? '';
+        const ct = response.headers()['content-type'] ?? '';
         if (!ct.includes('json')) return;
-        // Only inspect responses that look like channel/guide APIs
-        if (!/channel|guide|epg|live|program/i.test(url)) return;
         try {
           const body = await response.json();
-          const items: any[] = Array.isArray(body) ? body
-            : (body.data ?? body.channels ?? body.items ?? body.results ?? []);
-          if (!Array.isArray(items) || items.length < 2) return;
-          console.log(`API hit: ${url.slice(0, 120)} — ${items.length} items`);
+          // Walk common envelope shapes to find an array of items
+          const candidates = [
+            body,
+            body.data, body.channels, body.items, body.results,
+            body.content, body.payload, body.response, body.list,
+          ];
+          const items: any[] = (candidates.find(c => Array.isArray(c) && c.length >= 2) ?? []);
+          if (items.length < 2) return;
+          const url = response.url();
+          console.log(`API hit: ${url.slice(0, 120)} — ${items.length} items | keys: ${Object.keys(items[0] ?? {}).join(', ')}`);
           for (const item of items) {
-            const href  = item.watch_url ?? item.watchUrl ?? item.url
-                        ?? item.stream_url ?? item.streamUrl ?? '';
-            const name  = item.channel_name ?? item.channelName ?? item.name
-                        ?? item.title ?? '';
+            const href = item.watch_url ?? item.watchUrl ?? item.url
+                       ?? item.stream_url ?? item.streamUrl ?? item.partner_url ?? '';
+            const name = item.channel_name ?? item.channelName ?? item.name
+                       ?? item.title ?? item.channel_title ?? '';
             if (href && name) apiChannels.push({ name, href });
           }
         } catch { /* ignore parse errors */ }
@@ -112,16 +115,44 @@ test.describe('Guide', () => {
 
       await page.goto(guideUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
-      // Wait for the guide to render channel rows
+      // Wait for REAL channel content — the skeleton phase shows a gradient on every
+      // channel_img div; we need to wait until Angular has bound actual logo URLs or
+      // at least one /partner/ <a> link is present.
       const guideLoaded = await page.waitForFunction(() => {
-        // Accept any element whose class contains "guide" or "channel"
-        return document.querySelectorAll('[class*="guide"],[class*="channel"]').length > 3;
-      }, { timeout: 30_000 }).catch(() => null);
+        // Real condition 1: any same-host <a> link pointing to /partner/
+        if (document.querySelector('a[href*="/partner/"]')) return true;
+        // Real condition 2: any channel_img with a non-gradient background-image
+        const imgs = Array.from(document.querySelectorAll('.channel_img')) as HTMLElement[];
+        return imgs.some(img => {
+          const bg = (img.getAttribute('style') ?? '')
+                   + window.getComputedStyle(img).backgroundImage;
+          return bg.includes('url(') && !bg.includes('linear-gradient');
+        });
+      }, { timeout: 45_000 }).catch(() => null);
 
       if (!guideLoaded) {
-        test.skip(true, 'Guide page did not render — check URL or account access');
+        test.skip(true, 'Guide page did not render real content within 45 s — check URL or account access');
         return;
       }
+
+      // Scroll the guide's channel column top-to-bottom so Angular's intersection
+      // observer hydrates every channel_img div with its logo background-image.
+      await page.evaluate(async () => {
+        // The guide renders channels in a vertically-scrollable column
+        const col = document.querySelector(
+          '.tvguide, .guide_container, .guide-container, #guide, [class*="guide_wrap"], [class*="channel_list"]'
+        ) as HTMLElement | null;
+        const target: Element = col ?? document.documentElement;
+        const total = (target as HTMLElement).scrollHeight ?? document.body.scrollHeight;
+        const step  = 300;
+        for (let pos = 0; pos <= total; pos += step) {
+          (target as HTMLElement).scrollTop = pos;
+          await new Promise(r => setTimeout(r, 80));
+        }
+        (target as HTMLElement).scrollTop = 0;
+      });
+      // Give Angular time to apply bg-image bindings after scroll
+      await page.waitForTimeout(2_000);
 
       // ── Step 2: Dump guide container HTML for structure discovery ────────────
       const guideContainerHtml = await page.evaluate(() => {
