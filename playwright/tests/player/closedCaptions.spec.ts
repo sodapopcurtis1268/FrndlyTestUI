@@ -85,6 +85,8 @@ test.describe('Player', () => {
         return;
       }
 
+      const cardText = await firstCard.textContent().catch(() => '');
+      console.log(`Clicking card: "${cardText?.trim().slice(0, 60)}"`);
       await firstCard.scrollIntoViewIfNeeded();
       await page.waitForTimeout(300);
       await firstCard.click();
@@ -102,6 +104,7 @@ test.describe('Player', () => {
       const folioAppeared = await folioPlayBtn.first().waitFor({ state: 'visible', timeout: 8_000 })
         .then(() => true).catch(() => false);
 
+      console.log(`Folio appeared: ${folioAppeared}`);
       if (folioAppeared) {
         await folioPlayBtn.first().click();
       }
@@ -113,6 +116,11 @@ test.describe('Player', () => {
       }, { timeout: 60_000 }).catch(() => null);
 
       if (!videoStarted) {
+        const videoState = await page.evaluate(() => {
+          const v = document.querySelector('video') as HTMLVideoElement | null;
+          return v ? { readyState: v.readyState, currentTime: v.currentTime, paused: v.paused, src: v.currentSrc?.slice(0,80) } : null;
+        });
+        console.log('Video state at timeout:', JSON.stringify(videoState));
         test.skip(true, 'Video did not start within 60 s — DRM block or server issue');
         return;
       }
