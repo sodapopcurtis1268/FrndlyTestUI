@@ -69,23 +69,24 @@ test.describe('Player', () => {
       }
 
       // ── Step 2: Find a content row and click the first card ───────────────
-      const rowIndex = await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('.sec_slider'));
-        for (let i = 0; i < rows.length; i++) {
-          if (rows[i].querySelectorAll('.sheet_poster, .roller_poster').length > 0) return i;
-        }
-        return -1;
-      });
+      // Scope to .slick-active so we only target cards on the currently
+      // visible slide — cards on inactive slides share the same classes but
+      // are positioned off-screen inside the slider track, causing Playwright
+      // to report "element is not visible" even after scrollIntoViewIfNeeded.
+      // Also exclude .slick-cloned (duplicate slides Slick injects for looping).
+      const firstCard = page.locator(
+        '.sec_slider .slick-active:not(.slick-cloned) .sheet_poster, ' +
+        '.sec_slider .slick-active:not(.slick-cloned) .roller_poster'
+      ).first();
 
-      if (rowIndex === -1) {
-        test.skip(true, 'No content row with cards found');
+      const cardVisible = await firstCard.isVisible({ timeout: 5_000 }).catch(() => false);
+      if (!cardVisible) {
+        test.skip(true, 'No visible content card found in active carousel slides');
         return;
       }
 
-      const rowLocator = page.locator('.sec_slider').nth(rowIndex);
-      await rowLocator.scrollIntoViewIfNeeded();
-      const firstCard = rowLocator.locator('.sheet_poster, .roller_poster').first();
       await firstCard.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
       await firstCard.click();
 
       // ── Step 3: Handle folio overlay — click play if it appears ──────────
