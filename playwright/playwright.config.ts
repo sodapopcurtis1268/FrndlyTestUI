@@ -114,7 +114,22 @@ export default defineConfig({
     //   npx playwright test --project=player
     {
       name: 'player',
-      testMatch: /\/player\/.*\.spec\.ts/,
+      testMatch: /\/player\/(closedCaptions|rowInternalScrollLag)\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+        storageState: '.auth/user.json',
+        video: 'on',
+      },
+      dependencies: ['setup'],
+    },
+
+    // ── Guide CC suite ───────────────────────────────────────────────────────
+    // Long-running: iterates every guide channel, 25 s playback each.
+    //   npx playwright test --project=guideCC
+    {
+      name: 'guideCC',
+      testMatch: /\/player\/guideChannelCC\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         channel: 'chrome',
