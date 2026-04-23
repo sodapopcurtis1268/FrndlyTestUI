@@ -114,10 +114,34 @@ test.describe('Guide', () => {
       console.log(`Using selector: "${bestSelector.selector}" (${bestSelector.count} channels)`);
 
       // ── Step 3: Collect channel names ─────────────────────────────────────
+      // Log the full inner structure of the first channel element so we can
+      // identify the correct child selector for the channel name.
+      const firstChannelHtml = await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        return el ? el.innerHTML.slice(0, 600) : 'not found';
+      }, bestSelector.selector);
+      console.log('First channel element HTML:', firstChannelHtml);
+
       const channelNames: string[] = await page.evaluate((sel) => {
-        return Array.from(document.querySelectorAll(sel))
-          .map((el, i) => (el as HTMLElement).innerText?.trim().split('\n')[0] || `Channel ${i + 1}`)
-          .filter(Boolean);
+        return Array.from(document.querySelectorAll(sel)).map((el, i) => {
+          const h = el as HTMLElement;
+          // Try common child selectors for channel name
+          const nameEl =
+            h.querySelector('[class*="channel-name"]') ??
+            h.querySelector('[class*="channel_name"]') ??
+            h.querySelector('[class*="channelName"]') ??
+            h.querySelector('[class*="channel-title"]') ??
+            h.querySelector('[class*="title"]') ??
+            h.querySelector('[class*="name"]') ??
+            h.querySelector('h3, h4, h5, strong, b');
+
+          if (nameEl) return (nameEl as HTMLElement).innerText?.trim() || `Channel ${i + 1}`;
+
+          // Fallback: find the longest non-"LIVE"/"HD" token in innerText lines
+          const lines = h.innerText?.trim().split('\n').map(l => l.trim()).filter(Boolean) ?? [];
+          const best = lines.find(l => l.length > 2 && !['LIVE', 'HD', 'SD', '4K'].includes(l.toUpperCase()));
+          return best || `Channel ${i + 1}`;
+        });
       }, bestSelector.selector);
 
       console.log(`Found ${channelNames.length} channels`);
