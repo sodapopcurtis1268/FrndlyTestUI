@@ -1,8 +1,8 @@
 # Frndly TV — UI Test Automation Suite
 
-> **Owner:** QA / Engineering  
-> **Repo:** [FrndlyTestUI](https://github.com/sodapopcurtis1268/FrndlyTestUI)  
-> **Active branch:** `feature/playwright-web-suite`  
+> **Owner:** QA / Engineering
+> **Repo:** [FrndlyTestUI](https://github.com/sodapopcurtis1268/FrndlyTestUI)
+> **Active branch:** `feature/playwright-web-suite`
 > **Status:** Active development — Playwright suite growing alongside legacy Java/Selenium stack
 
 ---
@@ -23,28 +23,32 @@
 7. [CI / GitHub Actions](#ci--github-actions)
 8. [Configuration & Secrets](#configuration--secrets)
 9. [Page Objects](#page-objects)
-10. [Branch & PR Workflow](#branch--pr-workflow)
-11. [How to Add a New Test](#how-to-add-a-new-test)
-12. [Glossary](#glossary)
+10. [The `createRowTest` Factory](#the-createrowtest-factory)
+11. [RCA Charts & Reporting Artifacts](#rca-charts--reporting-artifacts)
+12. [Supporting Documents](#supporting-documents)
+13. [Branch & PR Workflow](#branch--pr-workflow)
+14. [How to Add a New Test](#how-to-add-a-new-test)
+15. [Java / Selenium Legacy Stack](#java--selenium-legacy-stack)
+16. [Glossary](#glossary)
 
 ---
 
 ## Overview
 
-This document describes the full end-to-end automated test suite for the Frndly TV web application (`watch.frndlytv.com`). The suite covers:
+This document describes the full end-to-end automated test suite for the Frndly TV web application (`watch.frndlytv.com`). The repository houses **two stacks**: a legacy Java/Selenium/TestNG framework (maintained but frozen) and the active Playwright/TypeScript suite now receiving all new development.
 
-| Coverage Area | Test Type |
-|---|---|
-| Home page content rows (19 rows) | Regression — TTFF per row |
-| Core user journey (login → play → sign out) | Smoke E2E |
-| Live Now row & random trending row | Smoke TTFF |
-| Home screen load performance | Performance |
-| Carousel CTA load time | Performance |
-| Row scroll lag (vertical) | Performance |
-| In-row horizontal scroll lag | Performance |
-| Tile load time | Performance |
-| Closed captions — single video | Functional |
-| Closed captions — every guide channel | Functional (long-running) |
+| Coverage Area | Test Type | Suite |
+|---|---|---|
+| Home page content rows (19 rows) | Regression — TTFF per row | `regression` |
+| Core user journey (login → play → sign out) | Smoke E2E | `smoke` |
+| Live Now row & random trending row | Smoke TTFF | `smoke` |
+| Home screen load performance | Performance SLA | `homeScreen` |
+| Carousel CTA load time | Performance | `homeScreen` |
+| Row scroll lag (vertical) | Long-task detection | `homeScreen` |
+| In-row horizontal scroll lag | Long-task detection | `homeScreen` |
+| Tile load time | Performance | `homeScreen` |
+| Closed captions — single video | Functional | `player` |
+| Closed captions — every guide channel | Functional (long-running, 2 h) | `guideCC` |
 
 ---
 
@@ -61,12 +65,15 @@ The original stack used **Java 17 + Selenium 4 + TestNG + LambdaTest**. Key pain
 | HTML report required Extent Reports library | `reporter: 'html'` built in, with screenshots, videos, and traces |
 | Sessions killed after long runs | Each test is fully isolated — no shared session state |
 | Non-existent rows waste 25 s scrolling before failing | Graceful `test.skip()` — no time wasted on missing content |
+| DRM failures surface as hard test failures | `waitForVideoToStart()` detects `DRM_NO_KEY_SYSTEM`, skips gracefully |
 
-The Java project remains untouched in the repo root. All new development is in `playwright/`.
+The Java project remains in the repo root (`src/`). All new development is in `playwright/`.
 
 ---
 
 ## Tech Stack
+
+### Playwright / TypeScript (Active)
 
 | Technology | Version | Role |
 |---|---|---|
@@ -79,34 +86,50 @@ The Java project remains untouched in the repo root. All new development is in `
 
 > **Why Google Chrome specifically?** Playwright's default Chromium build does not include the Widevine DRM plugin. Using `channel: 'chrome'` picks up the user-installed Chrome binary which has Widevine, enabling VOD playback in tests.
 
+### Java / Selenium (Legacy)
+
+| Technology | Version | Role |
+|---|---|---|
+| Java | 17 | Language |
+| Selenium | 4.18.1 | Browser automation |
+| TestNG | 7.9.0 | Test runner |
+| WebDriverManager | 5.7.0 | Auto browser driver downloads |
+| Extent Reports | 5.1.1 | HTML reports |
+| Log4j | 2.23.1 | Structured logging |
+| Maven | 3.9+ | Build system |
+| LambdaTest | — | Remote cloud grid |
+
 ---
 
 ## Repository Layout
 
 ```
 FrndlyTestUI/
-├── src/                            ← Legacy Java/Selenium/TestNG (untouched)
+├── src/                                    ← Legacy Java/Selenium/TestNG (frozen)
 │   └── main/java/com/automation/
-├── playwright/                     ← Active development
-│   ├── playwright.config.ts        # Suite config: projects, workers, timeouts, artifacts
+│       ├── config/ConfigReader.java        # Reads config.properties; typed accessors
+│       ├── pages/                          # 10 page objects (BasePage + 9 specifics)
+│       └── utils/                          # DriverFactory, WaitUtils, VideoRecorder
+├── playwright/                             ← Active development
+│   ├── playwright.config.ts               # Suite config: projects, workers, timeouts, artifacts
 │   ├── package.json
 │   ├── tsconfig.json
-│   ├── .env.example                # Template — copy to .env, never commit real values
-│   ├── .env                        # Gitignored — local credentials
+│   ├── .env.example                       # Template — copy to .env, never commit real values
+│   ├── .env                               # Gitignored — local credentials
 │   ├── .auth/
-│   │   └── user.json               # Saved login session (created by auth.setup.ts)
+│   │   └── user.json                      # Saved login session (created by auth.setup.ts)
 │   ├── pages/
-│   │   ├── BasePage.ts             # Shared helpers: typeAngular, jsClick, scrollPage
-│   │   ├── FrndlyLoginPage.ts      # 3-attempt login with Angular form handling
-│   │   ├── DashboardPage.ts        # findRowSection, clickCardAtIndexInRow, getRowNames
-│   │   ├── PlayerPage.ts           # waitForVideoToStart — TTFF measurement + DRM detection
-│   │   ├── SettingsPage.ts         # scrollToAndClickSignOut
-│   │   └── HomePage.ts             # Landing page (try.frndlytv.com)
+│   │   ├── BasePage.ts                    # Shared helpers: typeAngular, jsClick, scrollPage
+│   │   ├── FrndlyLoginPage.ts             # 3-attempt login with Angular form handling
+│   │   ├── DashboardPage.ts               # findRowSection, clickCardAtIndexInRow, getRowNames
+│   │   ├── PlayerPage.ts                  # waitForVideoToStart — TTFF measurement + DRM detection
+│   │   ├── SettingsPage.ts                # scrollToAndClickSignOut
+│   │   └── HomePage.ts                    # Landing page (try.frndlytv.com)
 │   ├── tests/
-│   │   ├── auth.setup.ts           # Login once → save .auth/user.json for all tests
-│   │   ├── liveNow.spec.ts         # [smoke] Live Now row TTFF
-│   │   ├── trendingMovies.spec.ts  # [smoke] Random eligible row TTFF
-│   │   ├── frndlyTV.spec.ts        # [smoke] Full E2E smoke
+│   │   ├── auth.setup.ts                  # Login once → save .auth/user.json for all tests
+│   │   ├── liveNow.spec.ts                # [smoke] Live Now row TTFF
+│   │   ├── trendingMovies.spec.ts         # [smoke] Random eligible row TTFF
+│   │   ├── frndlyTV.spec.ts               # [smoke] Full E2E smoke
 │   │   ├── homeScreen/
 │   │   │   ├── loadTime.spec.ts           # Home page load ≤ 2 s
 │   │   │   ├── carouselCtaLoadTime.spec.ts # Carousel CTA click → folio load time
@@ -116,15 +139,19 @@ FrndlyTestUI/
 │   │   ├── player/
 │   │   │   ├── closedCaptions.spec.ts     # CC available/off-by-default/toggle on/off
 │   │   │   └── guideChannelCC.spec.ts     # CC check on every guide channel (2 h)
-│   │   └── rows/                   # [regression] One file per home-page row (19 total)
+│   │   └── rows/                          # [regression] One file per home-page row (19 total)
 │   │       ├── recommendedForYou.spec.ts
 │   │       ├── blockbusterBoulevard.spec.ts
 │   │       └── ... (17 more)
 │   └── utils/
-│       ├── config.ts               # Typed env var wrapper — throws on missing required vars
-│       └── createRowTest.ts        # Factory: registers a standard TTFF test for a row
-└── docs/
-    └── confluence-automation-overview.md  ← This document
+│       ├── config.ts                      # Typed env var wrapper — throws on missing required vars
+│       └── createRowTest.ts               # Factory: registers a standard TTFF test for a row
+├── docs/
+│   └── confluence-automation-overview.md  # ← This document
+├── rca_charts/                            # RCA analysis PNG exports (10 charts)
+├── FrndlyTV_Automation_HowTo.docx         # Team onboarding how-to guide
+├── FrndlyTV_Automation_Presentation.pptx  # Stakeholder presentation deck
+└── build_deck.py                          # Script for generating the presentation deck
 ```
 
 ---
@@ -156,8 +183,8 @@ auth.setup.ts runs once
 
 ### Smoke Suite
 
-**Project name:** `smoke`  
-**Run command:** `npx playwright test --project=smoke`  
+**Project name:** `smoke`
+**Run command:** `npx playwright test --project=smoke`
 **When:** After every deploy or code change. ~2 minutes.
 
 | File | Test name | What it verifies |
@@ -170,9 +197,9 @@ auth.setup.ts runs once
 
 ### Regression Suite
 
-**Project name:** `regression`  
-**Run command:** `npx playwright test --project=regression`  
-**When:** Nightly or on PRs. Each test is independent.
+**Project name:** `regression`
+**Run command:** `npx playwright test --project=regression`
+**When:** Nightly or on PRs. Each test is independent. ~20 minutes with 4 workers.
 
 19 tests — one per home-page content row. Every file is 2 lines:
 
@@ -183,52 +210,51 @@ createRowTest('Blockbuster Boulevard');
 
 `createRowTest()` registers a standard test that:
 1. Navigates to `/home` (pre-authenticated)
-2. Scrolls to find the named row — skips if not visible for this account
-3. Clicks first card in the row
-4. Measures TTFF — attaches result to HTML report Attachments tab
-5. Skips gracefully if DRM-blocked
-6. Records video for every test (`video: 'on'`)
-7. Captures a screenshot of the playing video
+2. Waits up to 30 s for Angular to render at least one row heading — skips if server is slow
+3. Finds the named row — skips gracefully if not visible for this account
+4. Clicks first card in the row
+5. Measures TTFF — attaches result to HTML report Attachments tab
+6. Skips gracefully if DRM-blocked
+7. Records video for every test (`video: 'on'`)
+8. Captures a screenshot of the playing video
 
 **Full row list:**
 
-| Row | File |
-|---|---|
-| Recommended for You | `recommendedForYou.spec.ts` |
-| Blockbuster Boulevard | `blockbusterBoulevard.spec.ts` |
-| New Episodes | `newEpisodes.spec.ts` |
-| Most Watched | `mostWatched.spec.ts` |
-| Staff Picks | `staffPicks.spec.ts` |
-| Trending Now | `trendingNow.spec.ts` |
-| Watch Again | `watchAgain.spec.ts` |
-| Frndly Featured | `frndlyFeatured.spec.ts` |
-| Frndly Fan Favorites | `frndlyFanFavorites.spec.ts` |
-| Hallmark Holidays | `hallmarkHolidays.spec.ts` |
-| Timeless Classics | `timelessClassics.spec.ts` |
-| Rom Com | `romCom.spec.ts` |
-| History or Mystery | `historyOrMystery.spec.ts` |
-| Just Added Movies | `justAddedMovies.spec.ts` |
-| Leaving This Month | `leavingThisMonth.spec.ts` |
-| My Favorites | `myFavorites.spec.ts` |
-| Live Now | `liveNow.spec.ts` |
-| History or Mystery | `historyOrMystery.spec.ts` |
-| Staff Picks | `staffPicks.spec.ts` |
+| Row | File | Notes |
+|---|---|---|
+| Live Now | `liveNow.spec.ts` | Live linear TV |
+| Recommended for You | `recommendedForYou.spec.ts` | Personalized |
+| Blockbuster Boulevard | `blockbusterBoulevard.spec.ts` | |
+| New Episodes | `newEpisodes.spec.ts` | |
+| Most Watched | `mostWatched.spec.ts` | `skipOnTimeout: true` |
+| Staff Picks | `staffPicks.spec.ts` | |
+| Trending Now | `trendingNow.spec.ts` | |
+| Watch Again | `watchAgain.spec.ts` | Personalized |
+| Frndly Featured | `frndlyFeatured.spec.ts` | |
+| Frndly Fan Favorites | `frndlyFanFavorites.spec.ts` | |
+| Hallmark Holidays | `hallmarkHolidays.spec.ts` | Seasonal |
+| Timeless Classics | `timelessClassics.spec.ts` | |
+| Rom Com | `romCom.spec.ts` | |
+| History or Mystery | `historyOrMystery.spec.ts` | |
+| Just Added Movies | `justAddedMovies.spec.ts` | |
+| Leaving This Month | `leavingThisMonth.spec.ts` | |
+| My Favorites | `myFavorites.spec.ts` | Personalized |
 
 ---
 
 ### Home Screen Suite
 
-**Project name:** `homeScreen`  
-**Run command:** `npx playwright test --project=homeScreen`  
+**Project name:** `homeScreen`
+**Run command:** `npx playwright test --project=homeScreen`
 **When:** Performance regression checks.
 
 | File | Test name | SLA / Threshold |
 |---|---|---|
-| `loadTime.spec.ts` | Home Screen / Performance / Load time does not exceed 2 seconds | ≤ 2,000 ms from `page.goto` until `HOME` nav link is visible |
-| `carouselCtaLoadTime.spec.ts` | Home Screen / Performance / Carousel CTA load time | Clicks first visible carousel button, measures folio render time |
-| `rowScrollLag.spec.ts` | Home Screen / Performance / Navigate between rows — no visual lag | Scrolls home page top-to-bottom; detects main-thread long tasks > 300 ms via `PerformanceObserver` |
-| `rowInternalScrollLag.spec.ts` | Home Screen / Performance / Navigate within rows — no visual lag | Horizontal scroll within the first row with multiple cards; detects long tasks > 300 ms |
-| `tileLoadTime.spec.ts` | Home Screen / Performance / Tile load time | Measures time for tile images to fully load in the first content row |
+| `loadTime.spec.ts` | Load time does not exceed 2 seconds | ≤ 2,000 ms from `page.goto` until `HOME` nav link is visible |
+| `carouselCtaLoadTime.spec.ts` | Carousel CTA load time | Clicks first visible carousel button, measures folio render time |
+| `rowScrollLag.spec.ts` | Navigate between rows — no visual lag | Scrolls home page top-to-bottom; detects main-thread long tasks > 300 ms via `PerformanceObserver` |
+| `rowInternalScrollLag.spec.ts` | Navigate within rows — no visual lag | Horizontal scroll within the first row; detects long tasks > 300 ms |
+| `tileLoadTime.spec.ts` | Tile load time | Measures time for tile images to fully load in the first content row |
 
 **Long Task detection** (used by scroll lag tests):
 
@@ -246,8 +272,8 @@ A long task is any main-thread block > 50 ms (browser definition). The tests fla
 
 ### Player Suite
 
-**Project name:** `player`  
-**Run command:** `npx playwright test --project=player`  
+**Project name:** `player`
+**Run command:** `npx playwright test --project=player`
 **When:** On demand or nightly.
 
 #### `closedCaptions.spec.ts` — CC toggle functional test
@@ -283,9 +309,9 @@ button[title*="caption" i]
 
 ### Guide CC Suite
 
-**Project name:** `guideCC`  
-**Run command:** `npx playwright test --project=guideCC`  
-**Timeout:** 2 hours  
+**Project name:** `guideCC`
+**Run command:** `npx playwright test --project=guideCC`
+**Timeout:** 2 hours
 **When:** Weekly or on demand. Long-running.
 
 Tests that **every channel in the TV Guide has closed captions available**.
@@ -301,18 +327,23 @@ Tests that **every channel in the TV Guide has closed captions available**.
 **Results report** — attached to the HTML report and saved to `run_results/guide-cc-*.txt`:
 
 ```
-Guide CC Test — 2025-01-15T10:30:00Z
+Guide CC Test — 2026-04-23T10:30:00Z
 Total channels: 70
 CC active ✅ : 68
 CC not active ❌: 1
-No CC tracks : 1
-Skipped      : 0
+No CC tracks  : 1
+Skipped       : 0
 ```
 
 **Channel discovery strategy:**
-The guide (`/guide`) renders channel rows as empty `div.channel_img` divs (CSS background-image logos). Channel names appear as `<a>` links for a featured set (6 channels), with the remaining 64 channels using Angular dynamic click bindings. The test uses a multi-strategy approach to collect all channel navigation URLs.
+The guide (`/guide`) renders channel rows as empty `div.channel_img` divs (CSS background-image logos). Channel names appear as `<a>` links for a featured set, with the remaining channels using Angular dynamic click bindings. The test uses a multi-strategy approach:
 
-> **Status as of April 2026:** Channel URL discovery is actively being refined. Currently finding 6/70 channels via `<a>` DOM links. Investigation into Angular component state and CSS background-image URL patterns is ongoing.
+1. Collect `<a>` links whose parent chain contains a `div.channel_img`
+2. Detect Angular `routerLink` bindings via DOM attribute introspection
+3. Intercept API calls during guide scroll to capture channel slugs from network responses
+4. Fall back to XPath parent-walk clicks + post-click URL capture
+
+> **Status as of April 2026:** Multi-strategy discovery is implemented. Channel URL extraction via CSS background-image slug patterns and API interception is actively being refined.
 
 ---
 
@@ -402,6 +433,15 @@ npx playwright install chromium
 # Create local .env (never committed)
 cp .env.example .env
 # Edit .env with your test account credentials
+
+# Run smoke suite
+npx playwright test --project=smoke
+
+# Run a single row test
+npx playwright test blockbusterBoulevard --headed
+
+# View HTML report
+npx playwright show-report
 ```
 
 ---
@@ -419,7 +459,7 @@ Foundation class shared by all page objects.
 | `typeAngular` | `(locator, value)` | Uses JS native setter to trigger Angular reactive form validators — required for email/password inputs |
 | `jsClick` | `(locator)` | Dispatches `MouseEvent` via `evaluate()` — bypasses Playwright visibility check for lazy-loaded or off-screen cards |
 | `takeScreenshot` | `(name)` | Saves `screenshots/<name>-<timestamp>.png` |
-| `scrollPageToLoadAllRows` | `()` | Scrolls 600 px per step until `document.scrollHeight` stops growing |
+| `scrollPageToLoadAllRows` | `()` | Scrolls 600 px per step until `document.scrollHeight` stops growing; gives Angular intersection observers time to load rows |
 
 ### `FrndlyLoginPage`
 
@@ -432,6 +472,7 @@ Navigates to `/authenticator`. 3-attempt retry loop. Uses `typeAngular()` for em
 | `findRowSection(rowName)` | Scroll-and-poll for `h3.ott_tray_title` text match; returns `.sec_slider` locator |
 | `getCardCountInRow(rowName)` | Counts `.sheet_poster, .roller_poster` elements in row |
 | `clickCardAtIndexInRow(rowName, index)` | Scroll into view → jsClick → return `PlayerPage` |
+| `clickFirstCardInRow(rowName)` | Alias for index 0 |
 | `getRowNames()` | Full-page scroll → collect all `h3.ott_tray_title` text values |
 
 ### `PlayerPage`
@@ -443,6 +484,18 @@ Navigates to `/authenticator`. 3-attempt retry loop. Uses `typeAngular()` for em
 | `clickClose()` | `DashboardPage` | `page.goBack()` → waits for `/home` |
 | `isVideoPlaying()` | boolean | `!paused && currentTime > 0` snapshot check |
 
+**TTFF detection logic:**
+
+```typescript
+// VOD:  currentTime > 0 AND readyState ≥ HAVE_FUTURE_DATA (3)
+// Live: !paused AND !ended AND readyState ≥ HAVE_CURRENT_DATA (2)
+```
+
+Polls every 500 ms. Returns:
+- Positive integer: TTFF in milliseconds
+- `-1`: Timeout (video didn't start within budget)
+- `-2`: `DRM_NO_KEY_SYSTEM` detected — graceful skip
+
 > **DRM note:** Widevine VOD content may not decrypt in CI. `waitForVideoToStart` detects `DRM_NO_KEY_SYSTEM` in the page and returns `-2`. Tests skip (not fail) on DRM blocks.
 
 ### `SettingsPage`
@@ -452,6 +505,76 @@ Navigates to `/authenticator`. 3-attempt retry loop. Uses `typeAngular()` for em
 ### `HomePage`
 
 `clickLogin()` — returns `FrndlyLoginPage`. Used by the explicit login E2E smoke test.
+
+---
+
+## The `createRowTest` Factory
+
+**File:** `playwright/utils/createRowTest.ts`
+
+The factory eliminates boilerplate for regression row tests. Each of the 19 row spec files is just:
+
+```typescript
+import { createRowTest } from '../../utils/createRowTest';
+createRowTest('Row Name');
+// or for personalised rows:
+createRowTest('Most Watched', { skipOnTimeout: true });
+```
+
+### Options
+
+| Option | Type | Default | Purpose |
+|---|---|---|---|
+| `skipOnTimeout` | `boolean` | `false` | When `true`, a video-start timeout is treated as a skip (not a failure). Use for personalised rows where the test account's content varies run-to-run. |
+
+### What the generated test does
+
+```
+1. page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: 30s })
+2. Wait for Angular to render ≥ 1 row heading (h3.ott_tray_title) — skip if 30s exceeded
+3. getCardCountInRow(rowName) — skip if 0
+4. clickFirstCardInRow(rowName)
+5. waitForVideoToStart(config.videoTimeoutSeconds)
+   ├─ returns -2  → test.skip (DRM)
+   ├─ returns -1  → throw / test.skip if skipOnTimeout
+   └─ returns ms  → attach to report, screenshot, assert ≤ budget
+```
+
+### Timeout handling
+
+The factory wraps the TTFF call in `try/catch` to handle the case where the outer 180 s test budget kills the browser context mid-poll. When `skipOnTimeout: true` and the error message includes `'closed'`, the test skips rather than surfacing a confusing infrastructure error.
+
+---
+
+## RCA Charts & Reporting Artifacts
+
+The `rca_charts/` directory contains 10 PNG exports used in stakeholder reporting and root-cause-analysis presentations:
+
+| File | Chart |
+|---|---|
+| `01_incidents_by_theme.png` | Bar chart — incident count grouped by theme |
+| `02_monthly_timeline.png` | Line chart — incidents per month over time |
+| `03_quarterly_stacked.png` | Stacked bar — incidents by quarter and theme |
+| `04_severity_donut.png` | Donut chart — severity distribution (P1/P2/P3) |
+| `05_blocker_by_theme.png` | Bar chart — blocking issues by theme |
+| `06_recurrence_rate.png` | Line chart — recurrence rate of known issues |
+| `07_device_impact.png` | Bar chart — incidents by affected device/platform |
+| `08_theme_severity_heatmap.png` | Heatmap — theme × severity cross-tabulation |
+| `09_year_over_year.png` | Line chart — year-over-year incident trend |
+| `10_cumulative_growth.png` | Area chart — cumulative incident growth |
+
+These charts are generated by `build_deck.py` and embedded in `FrndlyTV_Automation_Presentation.pptx`.
+
+---
+
+## Supporting Documents
+
+| Document | Purpose |
+|---|---|
+| `FrndlyTV_Automation_HowTo.docx` | Step-by-step onboarding guide for new team members: setup, credential configuration, running tests locally, interpreting reports |
+| `FrndlyTV_Automation_Presentation.pptx` | Stakeholder presentation: suite overview, coverage metrics, RCA charts, roadmap |
+| `build_deck.py` | Python script that assembles the PPTX from RCA chart PNGs and slide templates |
+| `docs/confluence-automation-overview.md` | This document — authoritative technical reference |
 
 ---
 
@@ -483,6 +606,8 @@ feature/playwright-web-suite  ──PR──►  main
 // playwright/tests/rows/myNewRow.spec.ts
 import { createRowTest } from '../../utils/createRowTest';
 createRowTest('My New Row Name');
+// For personalised or variable-content rows:
+createRowTest('My Personalized Row', { skipOnTimeout: true });
 ```
 
 The `regression` project `testMatch` already picks up `tests/rows/**/*.spec.ts` — no config changes needed.
@@ -491,7 +616,7 @@ The `regression` project `testMatch` already picks up `tests/rows/**/*.spec.ts` 
 
 1. Create `playwright/tests/homeScreen/myPerf.spec.ts`
 2. Use `test.describe('Home Screen', () => { test.describe('Performance', () => { ... }) })`
-3. The `homeScreen` project picks it up automatically via `testMatch: /\/homeScreen\/.*\.spec\.ts/`
+3. The `homeScreen` project picks it up automatically via its `testMatch` pattern
 
 ### New smoke test
 
@@ -522,6 +647,54 @@ The `regression` project `testMatch` already picks up `tests/rows/**/*.spec.ts` 
 | Angular router navigation | Use `page.waitForURL('**/target-path')` not `waitForNavigation` |
 | Post-playback navigation | Always call `navigateHome()` after a video plays — Angular can get stuck after VOD |
 | Slick slider cards | Scope to `.slick-active:not(.slick-cloned)` to avoid off-screen duplicate slides |
+| Channel grid in Guide | Channel logos are CSS `background-image` on empty divs — no visible text to query |
+
+---
+
+## Java / Selenium Legacy Stack
+
+The Java framework remains in the repo root under `src/` and is fully functional. All new test development uses Playwright; the Java suite is maintained in place for reference and for scenarios where it is explicitly needed (e.g., LambdaTest integration).
+
+### Page Objects (Java)
+
+| Class | URL | Key Methods |
+|---|---|---|
+| `HomePage` | `try.frndlytv.com` | `clickLogin()` |
+| `FrndlyLoginPage` | `/authenticator` | `login(username, password)` |
+| `DashboardPage` | `/home` | `findRowSection()`, `clickFirstCardInRow()`, `getRowNames()` |
+| `PlayerPage` | `/watch/*` | `waitForPlayback()`, `captureScreenshot()` |
+| `GuidePage` | `/guide` | `clickChannel()`, `getProgramTitles()` |
+| `MoviesPage` | `/movies` | `clickFilter()`, `clickMovieAtIndex()` |
+| `TvSeriesPage` | `/tv_tv_series` | `clickFilter()`, `clickSeriesAtIndex()` |
+| `MyRecordingsPage` | `/my_recording` | `playRecordingByTitle()`, `deleteRecording()` |
+| `AddOnsPage` | `/add-ons` | `getAddOnNames()`, `isSubscribed()` |
+| `SettingsPage` | `/settings` | `scrollToAndClickSignOut()` |
+
+### Java Test Suites
+
+| Suite | Description |
+|---|---|
+| `FrndlyTVTest` | E2E smoke: navigate → login → Continue Watching → screenshot → sign out |
+| `HomePageRowsTest` | First card of each home-page row (20 rows); `SoftAssert` so one miss doesn't abort |
+| `AssetPlaybackTest` | First 3 + last 3 cards per row, 5 s playback each; `@DataProvider` per-row |
+| `TrendingMoviesPlaybackTest` | Random row selection and playback |
+| `DiagnosticTest` | DOM inspection utilities for debugging |
+
+### Running Java Tests
+
+```bash
+mvn test                          # Full suite
+mvn test -Dtest=FrndlyTVTest      # Single class
+mvn test -Dheadless=true          # Headless Chrome
+mvn test -Dbrowser=firefox        # Firefox
+mvn test -Dlt.enabled=true        # LambdaTest remote grid
+```
+
+**Artifacts:**
+- **Reports:** `target/surefire-reports/`
+- **Logs:** `logs/automation.log`
+- **Screenshots:** `screenshots/`
+- **Videos:** `videos/` (Monte Screen Recorder, local runs only)
 
 ---
 
@@ -533,14 +706,16 @@ The `regression` project `testMatch` already picks up `tests/rows/**/*.spec.ts` 
 | **DRM** | Digital Rights Management (Widevine) — VOD content requires a valid CDM; CI headless Chrome may lack it |
 | **storageState** | Playwright's mechanism for saving and restoring browser session (cookies + localStorage) |
 | **`createRowTest()`** | Factory function that generates a standard TTFF regression test for a named home-page row |
+| **`skipOnTimeout`** | Option on `createRowTest()` that converts video-start timeouts to skips — used for personalised rows |
 | **Long Task** | Browser event > 50 ms that blocks the main thread — anything > 300 ms is flagged as visible lag |
 | **folio** | The detail/info overlay that some content cards open before the player (has a Watch Now button) |
 | **`channel_img`** | Empty `div` in the TV Guide grid — channel logo rendered as CSS `background-image` |
 | **`typeAngular()`** | JavaScript-based input helper that fires the native `input` event, required to trigger Angular form validators |
 | **`jsClick()`** | JavaScript `HTMLElement.click()` dispatch via Playwright `evaluate()` — bypasses visibility checks |
 | **`video.textTracks`** | Browser API for subtitle/caption tracks on a video element; `mode === 'showing'` means CC is active |
+| **RCA** | Root Cause Analysis — process of identifying the underlying reason for a test failure or production incident |
 
 ---
 
-*Last updated: April 2026*  
+*Last updated: April 2026*
 *Suite version: Playwright 1.44 + TypeScript 5.4 + Angular 11 (target app)*
