@@ -174,49 +174,76 @@ test.describe('Guide', () => {
           .slice(0, 100);
       });
 
-      // Also look for Angular routerLink on non-<a> elements (div, img, etc.)
-      // Guide channel rows use routerlink="/partner/channel_slug" on a div —
-      // no href in the DOM — which is why <a> detection only finds 6 channels.
-      const routerLinkChannels: Array<{ href: string; name: string }> = await page.evaluate(() => {
-        const NAV_PATHS = new Set(['/', '/home', '/guide', '/movies', '/tv', '/my-stuff', '/add-ons', '/settings', '/search']);
-        const contentBody = document.querySelector('#content_body, .content_body') as HTMLElement | null;
-        const root = contentBody ?? document;
-        const els = Array.from(root.querySelectorAll('[routerlink]')) as HTMLElement[];
-        return els
-          .map(el => {
-            const path = el.getAttribute('routerlink') ?? '';
+      // ── Deep diagnostic: inspect channel_img attributes + CSS at 3 depths ──
+      // This reveals the slug (inline style bg-image URL, data-*, ng-reflect-*,
+      // or ancestor attributes) so we can build the full 70-channel URL list.
+      const channelImgDiag = await page.evaluate(() => {
+        const imgs = Array.from(document.querySelectorAll('.channel_img')).slice(0, 3) as HTMLElement[];
+        return imgs.map((img, idx) => {
+          function inspect(el: HTMLElement | null, label: string) {
+            if (!el) return { label, note: 'null' };
             return {
-              href: `${window.location.origin}${path.startsWith('/') ? '' : '/'}${path}`,
-              // Derive readable name from slug if element has no visible text
-              name: el.innerText?.trim().replace(/\n[\s\S]*/g, '').slice(0, 60)
-                || path.replace(/^\/partner\//, '').replace(/_/g, ' ')
-                || path,
-              path,
+              label,
+              tag: el.tagName,
+              class: el.className,
+              attrs: Array.from(el.attributes).map(a => `${a.name}="${a.value.slice(0, 80)}"`),
+              style: el.getAttribute('style') ?? '',
+              bgImage: window.getComputedStyle(el).backgroundImage?.slice(0, 150) ?? '',
             };
-          })
-          .filter(x =>
-            x.path.length > 1 &&
-            !NAV_PATHS.has(x.path) &&
-            !x.path.startsWith('/settings') &&
-            !x.path.startsWith('/home') &&
-            !x.path.startsWith('/guide') &&
-            !x.path.startsWith('/movies') &&
-            !x.path.startsWith('/tv')
-          )
-          .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i)
-          .slice(0, 100);
+          }
+          return {
+            idx,
+            self:        inspect(img, 'self'),
+            parent:      inspect(img.parentElement, 'parent'),
+            grandparent: inspect(img.parentElement?.parentElement ?? null, 'grandparent'),
+            great:       inspect(img.parentElement?.parentElement?.parentElement ?? null, 'great'),
+          };
+        });
       });
+      console.log('channel_img depth diagnostic:', JSON.stringify(channelImgDiag, null, 2));
 
-      console.log(`RouterLink channels: ${routerLinkChannels.length}`);
-      if (routerLinkChannels.length > 0) {
-        console.log('RouterLink sample:', JSON.stringify(routerLinkChannels.slice(0, 3), null, 2));
+      // ── Extract channel slugs from CSS background-image URLs ───────────────
+      // channel_img divs are empty but likely have an Angular-bound inline
+      // style like background-image:url("https://cdn.../channel_slug/logo.png")
+      const bgImageChannels: Array<{ href: string; name: string }> = await page.evaluate(() => {
+        const imgs = Array.from(document.querySelectorAll('.channel_img')) as HTMLElement[];
+        const results: Array<{ href: string; name: string }> = [];
+        for (const img of imgs) {
+          const src = [
+            img.getAttribute('style') ?? '',
+            window.getComputedStyle(img).backgroundImage ?? '',
+            // also check parent in case bg is on the row wrapper
+            img.parentElement?.getAttribute('style') ?? '',
+            window.getComputedStyle(img.parentElement!).backgroundImage ?? '',
+          ].join(' ');
+
+          // Patterns: /channels/slug, /logos/slug, /frndly/slug/, /partner/slug
+          const slugMatch =
+            src.match(/\/channels?\/([a-z0-9_-]+)/i) ??
+            src.match(/\/logos?\/([a-z0-9_-]+)/i) ??
+            src.match(/\/partner\/([a-z0-9_-]+)/i) ??
+            src.match(/\/([a-z0-9_]+(?:_channel|_tv|_network|_movie))\b/i);
+
+          if (slugMatch) {
+            const slug = slugMatch[1];
+            results.push({
+              href: `${window.location.origin}/partner/${slug}`,
+              name: slug.replace(/_/g, ' '),
+            });
+          }
+        }
+        return results.filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
+      });
+      console.log(`BG-image channels: ${bgImageChannels.length}`);
+      if (bgImageChannels.length > 0) {
+        console.log('BG sample:', JSON.stringify(bgImageChannels.slice(0, 3), null, 2));
       }
 
-      const channelLinks = [...domChannelLinks, ...routerLinkChannels, ...apiChannels]
+      const channelLinks = [...domChannelLinks, ...bgImageChannels, ...apiChannels]
         .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
 
-      console.log(`Channel links: dom=${domChannelLinks.length} router=${routerLinkChannels.length} api=${apiChannels.length} total=${channelLinks.length}`);
-      if (channelLinks.length > 0 && routerLinkChannels.length === 0) {
+      console.log(`Channel links: dom=${domChannelLinks.length} bg=${bgImageChannels.length} api=${apiChannels.length} total=${channelLinks.length}`);
+      if (channelLinks.length > 0) {
         console.log('Sample links:', JSON.stringify(channelLinks.slice(0, 5), null, 2));
       }
 
