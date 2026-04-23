@@ -142,38 +142,42 @@ test.describe('Guide', () => {
       });
       console.log('Guide container HTML:', guideContainerHtml);
 
-      // ── Step 3: Find channel links — DOM hrefs + intercepted API data ────────
+      // ── Step 3: Find channel links — guide content <a> tags ──────────────────
+      // The guide renders channel names as <a> links in the content body.
+      // We find all same-host <a> tags below the sticky header, exclude nav
+      // items (HOME, GUIDE, MOVIES, etc.), and use the remainder as channel links.
+      // We do NOT filter by href pattern (/live, /channel) because Frndly TV
+      // channel links use paths like /hallmark-channel, /lmn, etc.
       const domChannelLinks: Array<{ href: string; name: string }> = await page.evaluate(() => {
-        const links = Array.from(document.querySelectorAll('a[href]')) as HTMLAnchorElement[];
+        const NAV_TEXTS = new Set(
+          ['home', 'guide', 'movies', 'tv', 'my stuff', 'add-ons', 'settings', 'search', '']
+        );
+        const contentBody = document.querySelector('#content_body, .content_body');
+        const links = Array.from(
+          (contentBody ?? document).querySelectorAll('a[href]')
+        ) as HTMLAnchorElement[];
         return links
-          .filter(a => /\/live|\/channel|\/watch\//i.test(a.href))
+          .filter(a => {
+            const text = (a.innerText?.trim() ?? '').toLowerCase();
+            if (!text || NAV_TEXTS.has(text)) return false;
+            // Skip links inside the sticky header navigation
+            if (a.closest('.ott-sticky-header, .ott-header')) return false;
+            // Same-host links only (skip CDN / external hrefs)
+            try { return new URL(a.href).hostname === location.hostname; }
+            catch { return false; }
+          })
           .map(a => ({
             href: a.href,
-            name: a.innerText?.trim().replace(/\n[\s\S]*/g, '').slice(0, 60)
-              || a.getAttribute('aria-label')?.slice(0, 60)
-              || a.title?.slice(0, 60)
-              || '',
+            name: a.innerText?.trim().replace(/\n[\s\S]*/g, '').slice(0, 60) ?? '',
           }))
           .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i)
           .slice(0, 100);
       });
 
-      // Also look for Angular routerLink attributes pointing to live channels
-      const routerLinks: Array<{ href: string; name: string }> = await page.evaluate(() => {
-        const els = Array.from(document.querySelectorAll('[routerlink],[ng-reflect-router-link]')) as HTMLElement[];
-        return els
-          .map(el => ({
-            href: el.getAttribute('routerlink') ?? el.getAttribute('ng-reflect-router-link') ?? '',
-            name: el.innerText?.trim().slice(0, 60) ?? '',
-          }))
-          .filter(x => /live|channel/i.test(x.href))
-          .slice(0, 100);
-      });
-
-      const channelLinks = [...domChannelLinks, ...routerLinks, ...apiChannels]
+      const channelLinks = [...domChannelLinks, ...apiChannels]
         .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
 
-      console.log(`Channel links found: dom=${domChannelLinks.length} router=${routerLinks.length} api=${apiChannels.length} total=${channelLinks.length}`);
+      console.log(`Channel links: dom=${domChannelLinks.length} api=${apiChannels.length} total=${channelLinks.length}`);
       if (channelLinks.length > 0) {
         console.log('Sample links:', JSON.stringify(channelLinks.slice(0, 5), null, 2));
       }
