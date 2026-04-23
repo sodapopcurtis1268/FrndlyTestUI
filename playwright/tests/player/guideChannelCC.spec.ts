@@ -194,12 +194,18 @@ test.describe('Guide', () => {
               !el.querySelector('#time_bar_inner, .time_bar, .rt_controls')
             );
 
-            // Log outerHTML of first 3 for debugging
-            filtered.slice(0, 3).forEach((el, i) =>
-              console.log(`[row ${i}] outerHTML:`, el.outerHTML.slice(0, 300))
+            // If matched elements are empty (e.g. channel_img background divs),
+            // the channel name and click handler live on the PARENT element.
+            const searchEls = filtered.map(el =>
+              el.innerText?.trim() ? el : (el.parentElement ?? el) as HTMLElement
             );
 
-            return filtered.map((el, i) => {
+            // Log outerHTML of first 3 parent/search elements for debugging
+            searchEls.slice(0, 3).forEach((el, i) =>
+              console.log(`[row ${i}] outerHTML:`, el.outerHTML.slice(0, 400))
+            );
+
+            return searchEls.map((el, i) => {
               const nameEl =
                 el.querySelector('[class*="channel-name"]') ??
                 el.querySelector('[class*="channel_name"]') ??
@@ -209,7 +215,7 @@ test.describe('Guide', () => {
                 el.querySelector('[class*="chnl_name"]') ??
                 el.querySelector('[class*="title"]') ??
                 el.querySelector('[class*="name"]') ??
-                el.querySelector('h3, h4, h5, strong, b');
+                el.querySelector('h3, h4, h5, strong, b, p');
 
               if (nameEl) return (nameEl as HTMLElement).innerText?.trim() || `Channel ${i + 1}`;
 
@@ -262,13 +268,18 @@ test.describe('Guide', () => {
               );
             }
 
-            // Re-filter out header elements, then click by filtered index
+            // Re-filter out header elements, then click by filtered index.
+            // channel_img divs are empty background-image containers — the
+            // click handler is on the PARENT element, so we use evaluate to
+            // click parentElement (or the element itself if it has no parent).
             const clickTarget = page.locator(bestSelector!.selector).filter({
               hasNot: page.locator('#time_bar_inner, .time_bar, .rt_controls'),
             }).nth(ch.index ?? i);
             await clickTarget.scrollIntoViewIfNeeded();
             await page.waitForTimeout(300);
-            await clickTarget.click();
+            await clickTarget.evaluate((el: HTMLElement) => {
+              (el.parentElement ?? el).click();
+            });
           }
 
           // Handle folio overlay if it appears before the player
