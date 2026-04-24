@@ -82,6 +82,32 @@ test.describe('Guide', () => {
         return;
       }
 
+      // Scroll the guide's channel column so Angular's intersection observer
+      // hydrates #list_of_channels and all .channel divs with channel data.
+      // Without this scroll the element may not exist yet in the DOM.
+      await page.evaluate(async () => {
+        const col = document.querySelector(
+          '.tvguide, .guide_container, .guide-container, #guide, [class*="guide_wrap"], [class*="channel_list"]'
+        ) as HTMLElement | null;
+        const target = col ?? document.documentElement;
+        const total = target.scrollHeight ?? document.body.scrollHeight;
+        for (let pos = 0; pos <= total; pos += 300) {
+          target.scrollTop = pos;
+          await new Promise(r => setTimeout(r, 80));
+        }
+        target.scrollTop = 0;
+      });
+
+      // Wait up to 15 s for #list_of_channels to appear after scroll
+      let listReady = false;
+      for (let p = 0; p < 15 && !listReady; p++) {
+        listReady = await page.evaluate(() =>
+          document.querySelectorAll('#list_of_channels .channel img[title]').length > 0
+        ).catch(() => false);
+        if (!listReady) await page.waitForTimeout(1_000);
+      }
+      console.log(`list_of_channels rendered: ${listReady}`);
+
       // ── Step 2: Dump #list_of_channels for diagnostics ───────────────────
       const listOfChannelsInfo = await page.evaluate(() => {
         const el = document.querySelector('#list_of_channels') as HTMLElement | null;
@@ -292,29 +318,34 @@ test.describe('Guide', () => {
           // Navigate directly to channel URL
           await page.goto(ch.href, { waitUntil: 'commit', timeout: 30_000 });
 
-          // Poll up to 30 s for the channel page to render.
-          // Accept either: a video element (direct playback) OR a Watch button
-          // (folio/detail page that requires one more click).
+          // Poll up to 45 s for the channel page to render.
+          // Angular re-bootstraps on each page.goto(), taking 5-20 s in CI.
+          // Accept: a <video> element, any button on the page (folio/player),
+          // or a heading/title (channel info page) — anything that isnates Angular
+          // has rendered past the loading skeleton.
           let pageReady = false;
-          for (let p = 0; p < 30 && !pageReady; p++) {
+          for (let p = 0; p < 45 && !pageReady; p++) {
             pageReady = await page.evaluate(() => {
               if (document.querySelector('video')) return true;
-              const btns = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[];
-              return btns.some(b => /^watch(\s+now)?$/i.test((b.innerText ?? '').trim()));
+              // Any button appearing means Angular rendered the channel page
+              if (document.querySelectorAll('button').length > 0) return true;
+              // Partner channel info page: has a heading or channel title
+              if (document.querySelector('h1, h2, [class*="channel_title"], [class*="channel-title"]')) return true;
+              return false;
             }).catch(() => false);
             if (!pageReady) await page.waitForTimeout(1_000);
           }
 
           if (!pageReady) {
-            result.skipReason = 'Channel page did not render within 30 s';
+            result.skipReason = 'Channel page did not render within 45 s';
             console.log(`  ⏭  ${result.skipReason}`);
             results.push(result);
             continue;
           }
 
-          // Some channels land on a folio/detail page with a Watch button before
-          // starting playback. Click it if present.
-          const watchBtn = page.locator('button').filter({ hasText: /^watch(\s+now)?$/i }).first();
+          // Some channels land on a folio/detail page before starting playback.
+          // Look for any Watch / Watch Now / Watch Live / Play button and click it.
+          const watchBtn = page.locator('button').filter({ hasText: /watch|play/i }).first();
           if (await watchBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
             await watchBtn.click().catch(() => {});
             console.log(`  -> clicked Watch button`);
