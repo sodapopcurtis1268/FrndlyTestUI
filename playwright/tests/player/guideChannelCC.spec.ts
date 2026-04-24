@@ -226,29 +226,51 @@ test.describe('Guide', () => {
             // Frndly TV channel shape: { display: { imageUrl }, id, metadata, target, template }
             if (!first.display?.imageUrl) continue;
 
-            // Log the full first item so we can see what id and target look like
-            console.log('Angular channel[0] full:', JSON.stringify(first).slice(0, 600));
+            // Log the FULL first two items (no slice) so we can see target/id shape
+            console.log('Angular channel[0]:', JSON.stringify(first));
+            if (item[1]) console.log('Angular channel[1]:', JSON.stringify(item[1]));
 
             for (const ch of item) {
-              const target: string = String(ch.target ?? '');
-              const id:     string = String(ch.id     ?? '');
-              // display.title is the channel name if present; fall back to id
-              const name: string =
-                ch.display?.title    ??
-                ch.metadata?.name    ??
-                ch.metadata?.title   ??
-                id;
+              // target is an OBJECT (not a string) — drill into known path properties
+              const rawTarget = ch.target;
+              let targetStr = '';
+              if (typeof rawTarget === 'string') {
+                targetStr = rawTarget;
+              } else if (rawTarget && typeof rawTarget === 'object') {
+                // Try every plausible property name for the navigable path/slug
+                targetStr = rawTarget.url       ?? rawTarget.path      ??
+                            rawTarget.slug      ?? rawTarget.href       ??
+                            rawTarget.routerLink ?? rawTarget.link      ??
+                            rawTarget.partnerSlug ?? rawTarget.partner_slug ??
+                            rawTarget.channelSlug ?? rawTarget.channel_slug ??
+                            '';
+                if (!targetStr && Array.isArray(rawTarget.commands)) {
+                  targetStr = rawTarget.commands.join('/');
+                }
+                // If still empty, stringify the whole thing so the log shows the shape
+                if (!targetStr) console.log('  target object keys:', Object.keys(rawTarget).join(', '), '| value:', JSON.stringify(rawTarget).slice(0, 200));
+              }
 
-              // target may be a full URL, a path (/partner/slug), or just a slug
+              // id may also be an object — guard against that
+              const rawId = ch.id;
+              const idStr = (rawId !== null && rawId !== undefined && typeof rawId !== 'object')
+                ? String(rawId) : '';
+
+              const name: string =
+                ch.display?.title  ??
+                ch.metadata?.name  ??
+                ch.metadata?.title ??
+                idStr;
+
               let href = '';
-              if (target.startsWith('http')) {
-                href = target;
-              } else if (target.includes('/')) {
-                href = `${window.location.origin}${target.startsWith('/') ? '' : '/'}${target}`;
-              } else if (target) {
-                href = `${window.location.origin}/partner/${target}`;
-              } else if (id) {
-                href = `${window.location.origin}/partner/${id}`;
+              if (targetStr.startsWith('http')) {
+                href = targetStr;
+              } else if (targetStr.includes('/')) {
+                href = `${window.location.origin}${targetStr.startsWith('/') ? '' : '/'}${targetStr}`;
+              } else if (targetStr) {
+                href = `${window.location.origin}/partner/${targetStr}`;
+              } else if (idStr) {
+                href = `${window.location.origin}/partner/${idStr}`;
               }
 
               if (href && name) results.push({ href, name: String(name) });
