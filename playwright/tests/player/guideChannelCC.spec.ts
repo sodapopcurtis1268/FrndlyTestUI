@@ -253,21 +253,59 @@ test.describe('Guide', () => {
           }
 
           if (i < 5) {
-            console.log(`  -> elementFromPoint: <${coords.elTag}> "${coords.elClass}"`);
+            console.log(`  -> elementFromPoint (raw): <${coords.elTag}> "${coords.elClass}"`);
+          }
+
+          // For the first channel, log the DOM parent chain with computed pointer-events
+          // so we know the exact element hierarchy and which nodes intercept clicks.
+          if (i === 0) {
+            const domChain = await page.evaluate((name: string) => {
+              const img = Array.from(document.querySelectorAll('#list_of_channels img'))
+                .find(el => el.getAttribute('title') === name);
+              if (!img) return 'img not found';
+              const parts: string[] = [];
+              let el: Element | null = img;
+              for (let j = 0; j < 10 && el; j++) {
+                const pe = window.getComputedStyle(el).pointerEvents;
+                parts.push(`${el.tagName}.${(el.className?.toString() ?? '').slice(0, 25)}[pe=${pe}]`);
+                el = el.parentElement;
+              }
+              return parts.join(' ← ');
+            }, ch.name);
+            console.log(`  -> DOM chain: ${domChain}`);
           }
 
           // Small pause to let scrollIntoView settle before clicking
           await page.waitForTimeout(300);
 
-          // Disable pointer-events on overlay/blocker elements so the real mouse
-          // click (isTrusted=true) reaches the channel img underneath.
-          // rt_block and overlay_shadow are fixed/absolute divs that cover the
-          // guide and intercept clicks without forwarding Angular events.
+          // Inject a <style> tag to disable pointer-events on known overlay elements.
+          // A <style> tag is used instead of inline styles: Angular's change detection
+          // resets inline styles between evaluate() calls but cannot remove an
+          // externally-injected <style> tag. !important overrides any competing CSS.
           await page.evaluate(() => {
-            document.querySelectorAll<HTMLElement>(
-              '[class*="overlay_shadow"], [id*="overlay_shadow"], [class*="rt_block"], [id*="rt_block"]'
-            ).forEach(el => { (el as any).__origPE = el.style.pointerEvents; el.style.pointerEvents = 'none'; });
+            let s = document.getElementById('__pw_pe_override__') as HTMLStyleElement | null;
+            if (!s) {
+              s = document.createElement('style');
+              s.id = '__pw_pe_override__';
+              document.head.appendChild(s);
+            }
+            s.textContent = `
+              [class*="overlay_shadow"],[id*="overlay_shadow"],
+              [class*="rt_block"],[id*="rt_block"] {
+                pointer-events: none !important;
+              }
+            `;
           });
+
+          // Verify: what element is at the click point AFTER the override is injected?
+          // If still rt_block, the CSS is not working. If different, the click should land there.
+          const hitAfterDisable = await page.evaluate((cx) => {
+            const el = document.elementFromPoint(cx.x, cx.y);
+            return `<${el?.tagName ?? '?'}> "${(el?.className ?? '').toString().slice(0, 60)}"`;
+          }, coords);
+          if (i < 5) {
+            console.log(`  -> elementFromPoint (overlay off): ${hitAfterDisable}`);
+          }
 
           // page.mouse.click() generates a real mouse event with isTrusted=true.
           // Angular's (click) binding fires → router opens player overlay on /guide.
@@ -275,11 +313,9 @@ test.describe('Guide', () => {
           // which Angular's router ignores — that's why the previous approach failed.
           await page.mouse.click(coords.x, coords.y);
 
-          // Restore overlay pointer-events immediately after the click
+          // Remove the style override
           await page.evaluate(() => {
-            document.querySelectorAll<HTMLElement>(
-              '[class*="overlay_shadow"], [id*="overlay_shadow"], [class*="rt_block"], [id*="rt_block"]'
-            ).forEach(el => { el.style.pointerEvents = (el as any).__origPE ?? ''; });
+            document.getElementById('__pw_pe_override__')?.remove();
           });
 
           await page.waitForTimeout(500);
