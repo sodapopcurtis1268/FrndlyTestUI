@@ -42,28 +42,6 @@ const CC_BUTTON_SELECTORS = [
   '[data-testid*="subtitle" i]',
 ];
 
-// Selectors used to identify clickable channel items in the guide.
-// Ordered from most-specific to most-generic. The first selector that
-// returns items NOT containing a time_bar/rt_controls header wins.
-const CHANNEL_ITEM_SELECTORS = [
-  '[class*="guide-row"]',
-  '[class*="channel-row"]',
-  '[class*="guide-item"]',
-  '[class*="guide-channel"]',
-  '[class*="channel-item"]',
-  '[class*="channel-cell"]',
-  '[class*="guide-cell"]',
-  '[class*="guide_row"]',
-  '[class*="channel_row"]',
-  '[class*="chnl_row"]',
-  '[class*="chnl-row"]',
-  '[class*="prog_row"]',
-  '[class*="channel_wrap"]',
-  '[class*="channel-wrap"]',
-  'li[class*="channel"]',
-  'li[class*="chnl"]',
-  'div[class*="channel"]',
-];
 
 interface ChannelResult {
   name:         string;
@@ -154,31 +132,56 @@ test.describe('Guide', () => {
       // Give Angular time to apply bg-image bindings after scroll
       await page.waitForTimeout(2_000);
 
-      // ── Step 2: Dump guide container HTML for structure discovery ────────────
-      const guideContainerHtml = await page.evaluate(() => {
-        // Try to find the guide's outermost container
-        const candidates = [
-          '[class*="guide_container"]', '[class*="guide-container"]',
-          '[class*="guide_wrap"]',      '[class*="guide-wrap"]',
-          '[class*="epg"]',             '[id*="guide"]',
-          '[class*="guide_page"]',      '[class*="guide-page"]',
-          '[class*="channel_guide"]',   '[class*="channel-guide"]',
-        ];
-        for (const sel of candidates) {
-          const el = document.querySelector(sel);
-          if (el) return `[${sel}] ${el.outerHTML.slice(0, 2000)}`;
-        }
-        // Fallback: dump body start
-        return `[body] ${document.body.innerHTML.slice(0, 2000)}`;
-      });
-      console.log('Guide container HTML:', guideContainerHtml);
+      // ── Step 2: Inspect #list_of_channels — the real loaded guide structure ──
+      // Previous runs confirmed the skeleton phase shows channel_img divs but the
+      // fully-loaded guide uses id="list_of_channels". Dump its structure so we
+      // can identify clickable channel rows and extract Angular component data.
+      const listOfChannelsInfo = await page.evaluate(() => {
+        const el = document.querySelector('#list_of_channels') as HTMLElement | null;
+        if (!el) return { found: false, html: '', children: [] as any[], ngKeys: [] as string[] };
 
-      // ── Step 3: Find channel links — guide content <a> tags ──────────────────
-      // The guide renders channel names as <a> links in the content body.
-      // We find all same-host <a> tags below the sticky header, exclude nav
-      // items (HOME, GUIDE, MOVIES, etc.), and use the remainder as channel links.
-      // We do NOT filter by href pattern (/live, /channel) because Frndly TV
-      // channel links use paths like /hallmark-channel, /lmn, etc.
+        const children = Array.from(el.children).slice(0, 20).map(c => ({
+          tag:        c.tagName,
+          id:         c.id,
+          class:      c.className,
+          childCount: c.children.length,
+          text:       (c as HTMLElement).innerText?.trim().slice(0, 60) ?? '',
+          outerHTML:  c.outerHTML.slice(0, 300),
+          hasHref:    !!(c as HTMLAnchorElement).href || !!c.querySelector('a[href]'),
+        }));
+
+        // Angular 11 LView: the __ngContext__ array holds component instances
+        // at indices that vary; scan for objects with channel-like properties.
+        const ngKeys: string[] = [];
+        const ngCtx = (el as any).__ngContext__;
+        if (Array.isArray(ngCtx)) {
+          for (let i = 0; i < Math.min(ngCtx.length, 40); i++) {
+            const item = ngCtx[i];
+            if (item && typeof item === 'object' && !Array.isArray(item)) {
+              const keys = Object.keys(item).filter(k => k.length < 40);
+              if (keys.length > 0 && keys.length < 60) {
+                ngKeys.push(`[${i}]: ${keys.join(', ')}`);
+              }
+            } else if (Array.isArray(item) && item.length > 3 &&
+                       item[0] && typeof item[0] === 'object') {
+              const k0 = Object.keys(item[0]);
+              if (k0.some(k => /channel|partner|slug|name|url|id/i.test(k))) {
+                ngKeys.push(`[${i}] ARRAY(${item.length}): keys=${k0.slice(0, 8).join(',')} sample=${JSON.stringify(item[0]).slice(0, 150)}`);
+              }
+            }
+          }
+        }
+
+        return { found: true, html: el.outerHTML.slice(0, 4000), children, ngKeys };
+      });
+
+      console.log('list_of_channels found:', listOfChannelsInfo.found);
+      console.log('list_of_channels HTML (4 kB):', listOfChannelsInfo.html);
+      console.log('list_of_channels children:', JSON.stringify(listOfChannelsInfo.children, null, 2));
+      console.log('list_of_channels Angular context:', listOfChannelsInfo.ngKeys);
+
+      // ── Step 3: Find channel links ────────────────────────────────────────────
+      // Strategy A — <a href> partner links already in the DOM
       const domChannelLinks: Array<{ href: string; name: string }> = await page.evaluate(() => {
         const NAV_TEXTS = new Set(
           ['home', 'guide', 'movies', 'tv', 'my stuff', 'add-ons', 'settings', 'search', '']
@@ -191,9 +194,7 @@ test.describe('Guide', () => {
           .filter(a => {
             const text = (a.innerText?.trim() ?? '').toLowerCase();
             if (!text || NAV_TEXTS.has(text)) return false;
-            // Skip links inside the sticky header navigation
             if (a.closest('.ott-sticky-header, .ott-header')) return false;
-            // Same-host links only (skip CDN / external hrefs)
             try { return new URL(a.href).hostname === location.hostname; }
             catch { return false; }
           })
@@ -202,172 +203,110 @@ test.describe('Guide', () => {
             name: a.innerText?.trim().replace(/\n[\s\S]*/g, '').slice(0, 60) ?? '',
           }))
           .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i)
-          .slice(0, 100);
+          .slice(0, 200);
       });
 
-      // ── Deep diagnostic: inspect channel_img attributes + CSS at 3 depths ──
-      // This reveals the slug (inline style bg-image URL, data-*, ng-reflect-*,
-      // or ancestor attributes) so we can build the full 70-channel URL list.
-      const channelImgDiag = await page.evaluate(() => {
-        const imgs = Array.from(document.querySelectorAll('.channel_img')).slice(0, 3) as HTMLElement[];
-        return imgs.map((img, idx) => {
-          function inspect(el: HTMLElement | null, label: string) {
-            if (!el) return { label, note: 'null' };
-            return {
-              label,
-              tag: el.tagName,
-              class: el.className,
-              attrs: Array.from(el.attributes).map(a => `${a.name}="${a.value.slice(0, 80)}"`),
-              style: el.getAttribute('style') ?? '',
-              bgImage: window.getComputedStyle(el).backgroundImage?.slice(0, 150) ?? '',
-            };
-          }
-          return {
-            idx,
-            self:        inspect(img, 'self'),
-            parent:      inspect(img.parentElement, 'parent'),
-            grandparent: inspect(img.parentElement?.parentElement ?? null, 'grandparent'),
-            great:       inspect(img.parentElement?.parentElement?.parentElement ?? null, 'great'),
-          };
-        });
-      });
-      console.log('channel_img depth diagnostic:', JSON.stringify(channelImgDiag, null, 2));
-
-      // ── Extract channel slugs from CSS background-image URLs ───────────────
-      // channel_img divs are empty but likely have an Angular-bound inline
-      // style like background-image:url("https://cdn.../channel_slug/logo.png")
-      const bgImageChannels: Array<{ href: string; name: string }> = await page.evaluate(() => {
-        const imgs = Array.from(document.querySelectorAll('.channel_img')) as HTMLElement[];
+      // Strategy B — Angular component state: extract channel list from LView
+      const angularChannels: Array<{ href: string; name: string }> = await page.evaluate(() => {
         const results: Array<{ href: string; name: string }> = [];
-        for (const img of imgs) {
-          const src = [
-            img.getAttribute('style') ?? '',
-            window.getComputedStyle(img).backgroundImage ?? '',
-            // also check parent in case bg is on the row wrapper
-            img.parentElement?.getAttribute('style') ?? '',
-            window.getComputedStyle(img.parentElement!).backgroundImage ?? '',
-          ].join(' ');
-
-          // Patterns: /channels/slug, /logos/slug, /frndly/slug/, /partner/slug
-          const slugMatch =
-            src.match(/\/channels?\/([a-z0-9_-]+)/i) ??
-            src.match(/\/logos?\/([a-z0-9_-]+)/i) ??
-            src.match(/\/partner\/([a-z0-9_-]+)/i) ??
-            src.match(/\/([a-z0-9_]+(?:_channel|_tv|_network|_movie))\b/i);
-
-          if (slugMatch) {
-            const slug = slugMatch[1];
-            results.push({
-              href: `${window.location.origin}/partner/${slug}`,
-              name: slug.replace(/_/g, ' '),
-            });
+        // Walk every element with an Angular context, looking for a channel array
+        const candidates = Array.from(document.querySelectorAll(
+          '#list_of_channels, .list_of_channels, ott-guide-channel, [class*="tvguide"]'
+        ));
+        for (const el of candidates) {
+          const ctx = (el as any).__ngContext__;
+          if (!Array.isArray(ctx)) continue;
+          for (const item of ctx) {
+            if (!Array.isArray(item) || item.length < 3) continue;
+            const first = item[0];
+            if (!first || typeof first !== 'object') continue;
+            const keys = Object.keys(first);
+            if (!keys.some(k => /channel|partner|slug|name/i.test(k))) continue;
+            for (const ch of item) {
+              const slug = ch.partner_slug ?? ch.slug ?? ch.channel_slug ?? ch.id ?? '';
+              const name = ch.channel_name ?? ch.name ?? ch.title ?? slug;
+              if (slug && name) {
+                results.push({
+                  href: `${window.location.origin}/partner/${slug}`,
+                  name: String(name),
+                });
+              }
+            }
           }
         }
         return results.filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
       });
-      console.log(`BG-image channels: ${bgImageChannels.length}`);
-      if (bgImageChannels.length > 0) {
-        console.log('BG sample:', JSON.stringify(bgImageChannels.slice(0, 3), null, 2));
+      console.log(`Angular component channels: ${angularChannels.length}`);
+      if (angularChannels.length > 0) {
+        console.log('Angular sample:', JSON.stringify(angularChannels.slice(0, 3), null, 2));
       }
 
-      const channelLinks = [...domChannelLinks, ...bgImageChannels, ...apiChannels]
+      const channelLinks = [...domChannelLinks, ...angularChannels, ...apiChannels]
         .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
 
-      console.log(`Channel links: dom=${domChannelLinks.length} bg=${bgImageChannels.length} api=${apiChannels.length} total=${channelLinks.length}`);
+      console.log(`Channel links: dom=${domChannelLinks.length} angular=${angularChannels.length} api=${apiChannels.length} total=${channelLinks.length}`);
       if (channelLinks.length > 0) {
         console.log('Sample links:', JSON.stringify(channelLinks.slice(0, 5), null, 2));
       }
 
-      // ── Step 4: Discover the best DOM selector for channel rows ───────────
-      const guideStructure = await page.evaluate((selectors) => {
-        return selectors.map(sel => {
-          const els = Array.from(document.querySelectorAll(sel)) as HTMLElement[];
-          // Filter out header/time-bar divs — real channel rows won't contain
-          // the time_bar_inner element or the rt_controls arrows.
-          const filtered = els.filter(el =>
-            !el.querySelector('#time_bar_inner, .time_bar, .rt_controls')
-          );
-          return {
-            selector: sel,
-            total:    els.length,
-            count:    filtered.length,
-            sample:   filtered[0]?.innerText?.trim().slice(0, 60) ?? '',
-            outerTag: filtered[0]?.outerHTML?.slice(0, 200) ?? '',
-          };
-        }).filter(s => s.count > 0);
-      }, CHANNEL_ITEM_SELECTORS);
+      // Strategy C — click-and-capture: for channel rows in #list_of_channels
+      // that don't have <a href>, click them and read the resulting URL.
+      // This is slower (~2 s/channel) but guaranteed to work for any click binding.
+      if (channelLinks.length < 10) {
+        console.log('Fewer than 10 href channels — attempting click-and-capture for guide rows');
+        const knownHrefs = new Set(channelLinks.map(l => l.href));
 
-      console.log('Guide structure discovery (filtered):', JSON.stringify(guideStructure, null, 2));
+        // Candidate selectors for clickable channel rows (children of the guide container)
+        const rowSelectors = [
+          '#list_of_channels .channel_section > *',
+          '#list_of_channels > *:not(.channels_time_header)',
+          '.tvguide > *',
+          '.list_of_channels > *',
+        ];
 
-      // Pick the selector with the most non-header channel rows
-      const bestSelector = guideStructure.sort((a, b) => b.count - a.count)[0];
+        for (const sel of rowSelectors) {
+          const count = await page.locator(sel).count();
+          if (count === 0) continue;
+          console.log(`Click-capture using "${sel}" — ${count} rows`);
 
-      if (!bestSelector && channelLinks.length === 0) {
-        test.skip(true, 'No channel items or links found in guide — check console HTML dump above');
+          for (let idx = 0; idx < count; idx++) {
+            const row = page.locator(sel).nth(idx);
+            // Skip rows that already have an <a href> we've captured
+            const existingHref = await row.locator('a[href*="/partner/"]').getAttribute('href').catch(() => null);
+            if (existingHref && knownHrefs.has(existingHref)) continue;
+
+            await row.scrollIntoViewIfNeeded().catch(() => {});
+            await row.click({ timeout: 5_000 }).catch(() => {});
+            await page.waitForTimeout(1_500);
+
+            const url = page.url();
+            if (url !== guideUrl && !knownHrefs.has(url) && url.includes('/partner/')) {
+              const slug = url.split('/partner/')[1]?.split(/[?#]/)[0] ?? '';
+              channelLinks.push({ href: url, name: slug.replace(/_/g, ' ') });
+              knownHrefs.add(url);
+              console.log(`  Captured: ${url}`);
+              // Return to guide for next channel
+              await page.goto(guideUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+              await page.waitForSelector('#list_of_channels', { timeout: 20_000 }).catch(() => {});
+              await page.waitForTimeout(500);
+            }
+          }
+          if (channelLinks.length >= 10) break;
+        }
+        console.log(`After click-capture: ${channelLinks.length} total channels`);
+      }
+
+      // ── Step 4: Build final channel list from all collected sources ──────────
+      if (channelLinks.length === 0) {
+        test.skip(true, 'No channel links found via DOM, Angular context, API, or click-capture — check console above');
         return;
       }
 
-      // ── Step 5: Build the channel list ────────────────────────────────────
-      // Prefer href-based list (navigate directly); fall back to DOM click list.
-      type ChannelEntry = { name: string; href?: string; index?: number };
-      let channels: ChannelEntry[] = [];
-
-      if (channelLinks.length >= 5) {
-        // Use links directly — most reliable approach
-        channels = channelLinks.map((l, i) => ({
-          name:  l.name || `Channel ${i + 1}`,
-          href:  l.href,
-        }));
-        console.log(`Using href-based navigation for ${channels.length} channels`);
-      } else if (bestSelector) {
-        // Fall back to DOM index-based clicking
-        const names: string[] = await page.evaluate(
-          ({ sel }: { sel: string }) => {
-            const els = Array.from(document.querySelectorAll(sel)) as HTMLElement[];
-            const filtered = els.filter(el =>
-              !el.querySelector('#time_bar_inner, .time_bar, .rt_controls')
-            );
-
-            // If matched elements are empty (e.g. channel_img background divs),
-            // the channel name and click handler live on the PARENT element.
-            const searchEls = filtered.map(el =>
-              el.innerText?.trim() ? el : (el.parentElement ?? el) as HTMLElement
-            );
-
-            // Log outerHTML of first 3 parent/search elements for debugging
-            searchEls.slice(0, 3).forEach((el, i) =>
-              console.log(`[row ${i}] outerHTML:`, el.outerHTML.slice(0, 400))
-            );
-
-            return searchEls.map((el, i) => {
-              const nameEl =
-                el.querySelector('[class*="channel-name"]') ??
-                el.querySelector('[class*="channel_name"]') ??
-                el.querySelector('[class*="channelName"]') ??
-                el.querySelector('[class*="channel-title"]') ??
-                el.querySelector('[class*="ch_name"]') ??
-                el.querySelector('[class*="chnl_name"]') ??
-                el.querySelector('[class*="title"]') ??
-                el.querySelector('[class*="name"]') ??
-                el.querySelector('h3, h4, h5, strong, b, p');
-
-              if (nameEl) return (nameEl as HTMLElement).innerText?.trim() || `Channel ${i + 1}`;
-
-              const lines = el.innerText?.trim().split('\n').map((l: string) => l.trim()).filter(Boolean) ?? [];
-              const best = lines.find((l: string) => l.length > 2 && !['LIVE', 'HD', 'SD', '4K'].includes(l.toUpperCase()));
-              return best || `Channel ${i + 1}`;
-            });
-          },
-          { sel: bestSelector.selector }
-        );
-        channels = names.map((name, i) => ({ name, index: i }));
-        console.log(`Using DOM click for ${channels.length} channels via "${bestSelector.selector}"`);
-      }
-
-      if (channels.length === 0) {
-        test.skip(true, 'Could not build channel list — check console output above');
-        return;
-      }
+      type ChannelEntry = { name: string; href: string };
+      const channels: ChannelEntry[] = channelLinks.map((l, i) => ({
+        name: l.name || `Channel ${i + 1}`,
+        href: l.href,
+      }));
 
       console.log(`Total channels to test: ${channels.length}`);
 
@@ -387,50 +326,9 @@ test.describe('Guide', () => {
         console.log(`\n[${i + 1}/${channels.length}] Testing: "${ch.name}"`);
 
         try {
-          if (ch.href) {
-            // ── Href-based navigation (preferred) ──────────────────────────
-            await page.goto(ch.href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-          } else {
-            // ── DOM index-based click (fallback) ───────────────────────────
-            // Navigate to guide fresh for each channel (avoids stale DOM)
-            if (i > 0) {
-              await page.goto(guideUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-              await page.waitForFunction(
-                (sel: string) => document.querySelectorAll(sel).length > 0,
-                bestSelector!.selector,
-                { timeout: 15_000 }
-              );
-            }
-
-            // channel_img divs are empty CSS-image containers; the Angular
-            // click binding lives on the parent row. Use Playwright native
-            // click (real mouse events) on the XPath parent.
-            const channelImgLoc = page.locator('div.channel_img').nth(ch.index ?? i);
-            await channelImgLoc.scrollIntoViewIfNeeded();
-            await page.waitForTimeout(300);
-
-            // Try parent first, fall back to the img div itself
-            try {
-              await channelImgLoc.locator('xpath=..').click({ timeout: 5_000 });
-            } catch {
-              await channelImgLoc.click({ force: true, timeout: 3_000 }).catch(() => {});
-            }
-
-            // ── Diagnostic for first channel only ──────────────────────────
-            if (i === 0) {
-              await page.waitForTimeout(1_500);
-              console.log(`  [diag] URL after click: ${page.url()}`);
-              const visibleEls = await page.evaluate(() =>
-                Array.from(document.querySelectorAll('button, a[href], [role="button"]'))
-                  .filter(el => !!(el as HTMLElement).offsetParent)
-                  .map(el => `${el.tagName}: ${(el as HTMLElement).innerText?.trim().slice(0, 40) || el.getAttribute('aria-label') || ''}`)
-                  .filter(Boolean)
-                  .slice(0, 15)
-              );
-              console.log(`  [diag] Visible interactive elements:`, JSON.stringify(visibleEls));
-              await page.screenshot({ path: `screenshots/guide-ch1-after-click-${Date.now()}.png` }).catch(() => {});
-            }
-          }
+          // All channels now have an href (from DOM links, Angular context, API,
+          // or click-capture). Navigate directly.
+          await page.goto(ch.href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
           // Handle channel detail / folio page — /partner/* pages require
           // clicking Watch before playback starts. Extend timeout to 12 s
