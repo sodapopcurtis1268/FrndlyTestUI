@@ -225,42 +225,28 @@ test.describe('Guide', () => {
         // Return full first item to Node.js so we see it in CI stdout
         const debug = JSON.stringify(arr[0]);
 
+        // Data shape confirmed:
+        //   target.pageAttributes.networkid  = "31"  (channel's numeric ID)
+        //   target.path                      = "channel//"  (unfilled template → /channel/{networkid})
+        //   display.markers.special.value    = "non_playable"  (skip these)
+        //   display.title                    = "A&E"
+
         const channels: Array<{href:string;name:string}> = [];
         for (const ch of arr) {
-          const name: string = ch.display?.title ?? ch.metadata?.name ?? String(ch.id ?? '');
+          // Skip channels that cannot be played
+          if (ch.display?.markers?.special?.value === 'non_playable') continue;
 
-          // Try every nested string/array in target to find the slug
-          function extractSlug(val: any, depth = 0): string {
-            if (depth > 4 || val === null || val === undefined) return '';
-            if (typeof val === 'string' && val.length > 1) return val;
-            if (typeof val === 'number') return String(val);
-            if (Array.isArray(val)) {
-              // Angular routerLink commands: ['/partner', 'slug'] → '/partner/slug'
-              const joined = val.map(String).join('/');
-              if (joined.length > 1) return joined;
-            }
-            if (typeof val === 'object') {
-              for (const v of Object.values(val)) {
-                const s = extractSlug(v, depth + 1);
-                if (s && s !== '[object Object]') return s;
-              }
-            }
-            return '';
-          }
+          const name: string = ch.display?.title ?? String(ch.id ?? '');
+          // networkid is the reliable channel identifier
+          const networkId: string =
+            ch.target?.pageAttributes?.networkid ??
+            ch.metadata?.id ??
+            (typeof ch.id !== 'object' ? String(ch.id ?? '') : '');
 
-          let slug = extractSlug(ch.target);
+          if (!networkId || !name) continue;
 
-          // Also check metadata and id
-          if (!slug) slug = ch.metadata?.partner_slug ?? ch.metadata?.slug ?? ch.metadata?.channel_slug ?? '';
-          if (!slug && ch.id !== null && ch.id !== undefined && typeof ch.id !== 'object') slug = String(ch.id);
-
-          if (!slug || !name) continue;
-
-          let href = '';
-          if (slug.startsWith('http'))        href = slug;
-          else if (slug.startsWith('/'))      href = `${window.location.origin}${slug}`;
-          else                                href = `${window.location.origin}/partner/${slug}`;
-
+          // target.path = "channel//" → real URL is /channel/{networkId}
+          const href = `${window.location.origin}/channel/${networkId}`;
           channels.push({ href, name });
         }
 
