@@ -235,7 +235,14 @@ test.describe('Guide', () => {
             if (!img) return null;
             img.scrollIntoView({ block: 'center', behavior: 'instant' });
             const rect = img.getBoundingClientRect();
-            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+            const x = rect.left + rect.width / 2;
+            const y = rect.top + rect.height / 2;
+            const elAtPoint = document.elementFromPoint(x, y);
+            return {
+              x, y,
+              elTag:   elAtPoint?.tagName ?? 'none',
+              elClass: (elAtPoint?.className ?? '').toString().slice(0, 80),
+            };
           }, ch.name);
 
           if (!coords) {
@@ -245,21 +252,40 @@ test.describe('Guide', () => {
             continue;
           }
 
+          if (i < 5) {
+            console.log(`  -> elementFromPoint: <${coords.elTag}> "${coords.elClass}"`);
+          }
+
           // Small pause to let scrollIntoView settle before clicking
           await page.waitForTimeout(300);
+
+          // Disable pointer-events on overlay_shadow elements so the real mouse
+          // click (isTrusted=true) reaches the channel img underneath.
+          // These fixed/absolute overlays cover the guide and intercept clicks.
+          await page.evaluate(() => {
+            document.querySelectorAll<HTMLElement>('[class*="overlay_shadow"], [id*="overlay_shadow"]')
+              .forEach(el => { (el as any).__origPE = el.style.pointerEvents; el.style.pointerEvents = 'none'; });
+          });
 
           // page.mouse.click() generates a real mouse event with isTrusted=true.
           // Angular's (click) binding fires → router opens player overlay on /guide.
           // JS element.click() / page.evaluate click() produces isTrusted=false
           // which Angular's router ignores — that's why the previous approach failed.
           await page.mouse.click(coords.x, coords.y);
+
+          // Restore overlay pointer-events immediately after the click
+          await page.evaluate(() => {
+            document.querySelectorAll<HTMLElement>('[class*="overlay_shadow"], [id*="overlay_shadow"]')
+              .forEach(el => { el.style.pointerEvents = (el as any).__origPE ?? ''; });
+          });
+
           await page.waitForTimeout(500);
 
           console.log(`  -> clicked — url: ${page.url()}`);
 
           // Diagnostic dump for first 5 channels (understand page structure)
           if (i < 5) {
-            const diag = await page.evaluate(() => {
+            const diag = await page.evaluate((cx) => {
               const v = document.querySelector('video') as HTMLVideoElement | null;
               const iframes = Array.from(document.querySelectorAll('iframe'))
                 .map(f => ({ src: (f as HTMLIFrameElement).src.slice(0, 80), id: f.id }));
@@ -272,17 +298,19 @@ test.describe('Guide', () => {
                 .filter(b => b.text || b.aria)
                 .slice(0, 8);
               const playerEls = Array.from(document.querySelectorAll(
-                '[class*="player"], [class*="Player"], .jw-video, video-js, [class*="overlay"]'
+                '[class*="player"], [class*="Player"], .jw-video, video-js'
               )).map(el => el.className.slice(0, 60)).slice(0, 5);
+              const elAfterClick = document.elementFromPoint(cx.x, cx.y);
               return {
                 hasVideo: !!v,
                 videoRS:  v?.readyState ?? -1,
                 iframes,
                 buttons: btns,
                 playerEls,
+                elAfterClick: `<${elAfterClick?.tagName}> ${(elAfterClick?.className ?? '').toString().slice(0, 60)}`,
                 url: location.href.slice(0, 80),
               };
-            }).catch(() => null);
+            }, coords).catch(() => null);
             if (diag) console.log(`  -> diag: ${JSON.stringify(diag)}`);
           }
 
