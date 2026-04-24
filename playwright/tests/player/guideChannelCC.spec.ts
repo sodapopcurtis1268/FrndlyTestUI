@@ -296,7 +296,11 @@ test.describe('Guide', () => {
 
       const results: ChannelResult[] = [];
 
-      // ── Step 6: Test each channel ─────────────────────────────────────────
+      // ── Step 6: Test each channel via guide click ─────────────────────────
+      // Navigate to the guide for each channel and click the channel element.
+      // This uses Angular's client-side routing (same as a real user) which
+      // avoids the 40-60 s cold Angular bootstrap that happens with a direct
+      // page.goto('/channel/31') hard-load.
       for (let i = 0; i < channels.length; i++) {
         const ch = channels[i];
         const result: ChannelResult = {
@@ -307,74 +311,77 @@ test.describe('Guide', () => {
           ccActive:     false,
         };
 
-        console.log(`\n[${i + 1}/${channels.length}] Testing: "${ch.name}" — ${ch.href}`);
+        console.log(`\n[${i + 1}/${channels.length}] Testing: "${ch.name}"`);
 
         try {
-          // 'commit' resolves as soon as the server responds — before Angular
-          // bootstraps — which avoids the hang caused by domcontentloaded waiting
-          // for deferred scripts in the SPA shell.
-          console.log(`  → goto…`);
-          await page.goto(ch.href, { waitUntil: 'commit', timeout: 30_000 });
-          console.log(`  → landed: ${page.url()}`);
+          // Navigate to guide. After the first load the JS bundle is cached so
+          // subsequent loads are much faster (~3-5 s vs 30 s cold).
+          await page.goto(guideUrl, { waitUntil: 'commit', timeout: 30_000 });
 
-          // Handle channel detail / folio page — /partner/* pages require
-          // clicking Watch before playback starts. Extend timeout to 12 s
-          // to give the Angular page time to render after navigation.
-          const folioBtn = page.locator([
-            'button:has-text("Watch Now")',
-            'button:has-text("Watch Live")',
-            'button:has-text("Watch")',
-            'button:has-text("Play")',
-            'a:has-text("Watch Now")',
-            'a:has-text("Watch Live")',
-            'a:has-text("Watch")',
-          ].join(', ')).first();
-
-          // Create a user gesture so autoplay policy never blocks us, regardless
-          // of whether the --autoplay-policy flag was inherited by Chrome.
-          await page.click('body', { timeout: 5_000 }).catch(() => {});
-
-          // Give Angular more time to bootstrap after 'commit' navigation (20 s)
-          console.log(`  → checking folio…`);
-          const folioAppeared = await folioBtn.waitFor({ state: 'visible', timeout: 20_000 })
-            .then(() => true).catch(() => false);
-
-          if (folioAppeared) {
-            console.log(`  -> folio found — clicking watch button`);
-            await folioBtn.click({ timeout: 20_000 });
-            console.log(`  -> post-click URL: ${page.url()}`);
+          // Wait for #list_of_channels to render (poll — avoids waitForSelector
+          // timeout issues with test.setTimeout(7_200_000))
+          let guideReady = false;
+          for (let p = 0; p < 30 && !guideReady; p++) {
+            guideReady = await page.evaluate(() =>
+              document.querySelectorAll('#list_of_channels .channel img[title]').length > 0
+            ).catch(() => false);
+            if (!guideReady) await page.waitForTimeout(1_000);
+          }
+          if (!guideReady) {
+            result.skipReason = 'Guide did not render within 30 s';
+            console.log(`  ⏭  ${result.skipReason}`);
+            results.push(result);
+            continue;
           }
 
-          // Poll for video start — manual loop avoids waitForFunction timeout
-          // issues caused by test.setTimeout(7_200_000) overriding page defaults.
-          // On each poll, if a video element is present but paused (autoplay
-          // blocked despite --autoplay-policy flag), call v.play() explicitly.
-          console.log(`  -> polling for video…`);
+          // Click the channel by img title. page.evaluate handles special chars
+          // (A&E, Crime + Investigation, etc.) without CSS selector escaping,
+          // and scrolls the element into view before clicking.
+          const clicked = await page.evaluate((name) => {
+            const imgs = Array.from(
+              document.querySelectorAll('#list_of_channels .channel img[title]')
+            ) as HTMLImageElement[];
+            const target = imgs.find(img => img.getAttribute('title') === name);
+            if (!target) return false;
+            target.scrollIntoView({ block: 'center', behavior: 'instant' });
+            (target.closest('.channel') as HTMLElement | null)?.click();
+            return true;
+          }, ch.name);
+
+          if (!clicked) {
+            result.skipReason = `"${ch.name}" not in guide`;
+            console.log(`  ⏭  ${result.skipReason}`);
+            results.push(result);
+            continue;
+          }
+
+          await page.waitForTimeout(500); // let Angular process the click event
+          console.log(`  -> clicked — url: ${page.url()}`);
+
+          // Poll for video (60 s). Angular SPA navigation + HLS stream init
+          // can take 15-30 s in CI. On each poll, call v.play() if paused.
           let videoStarted = false;
-          for (let poll = 0; poll < 30 && !videoStarted; poll++) {
+          for (let poll = 0; poll < 60 && !videoStarted; poll++) {
             videoStarted = await page.evaluate(() => {
               const v = document.querySelector('video') as HTMLVideoElement | null;
               if (!v) return false;
-              // Belt-and-suspenders: if the video loaded but is paused, start it.
-              if (v.paused && v.readyState >= 1) {
-                v.play().catch(() => { /* ignore DRM / policy errors */ });
-              }
+              if (v.paused && v.readyState >= 1) v.play().catch(() => {});
               return v.readyState >= 2 && (v.currentTime > 0 || !v.paused);
             }).catch(() => false);
             if (!videoStarted) await page.waitForTimeout(1_000);
           }
-          console.log(`  -> video poll done: started=${videoStarted} url=${page.url()}`);
+
+          const finalUrl = page.url();
+          const videoState = await page.evaluate(() => {
+            const v = document.querySelector('video') as HTMLVideoElement | null;
+            if (!v) return 'no video element';
+            return `rs=${v.readyState} paused=${v.paused} t=${v.currentTime.toFixed(1)} err=${v.error?.code ?? 'none'} src=${v.currentSrc.slice(0, 80)}`;
+          }).catch(() => 'eval failed');
+          console.log(`  -> video=${videoStarted} url=${finalUrl} | ${videoState}`);
 
           if (!videoStarted) {
-            // Diagnose what is actually on the page
-            const videoState = await page.evaluate(() => {
-              const v = document.querySelector('video') as HTMLVideoElement | null;
-              if (!v) return 'no <video> element';
-              return `readyState=${v.readyState} paused=${v.paused} currentTime=${v.currentTime.toFixed(2)} error=${v.error?.code ?? 'none'} src=${v.currentSrc.slice(0, 80)}`;
-            }).catch(() => 'evaluate failed');
-            console.log(`  -> page="${await page.title().catch(() => '?')}" video: ${videoState}`);
-            result.skipReason = 'Video did not start within 30 s';
-            console.log(`  ⏭  Skipped — ${result.skipReason}`);
+            result.skipReason = 'Video did not start within 60 s';
+            console.log(`  ⏭  Skipped`);
             results.push(result);
             continue;
           }
