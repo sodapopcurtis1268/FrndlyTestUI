@@ -6,18 +6,24 @@ import * as path from 'path';
 /**
  * Guide — Closed Captions on every channel
  *
- * Steps:
- *   1. Navigate to the Guide once to collect all channel URLs
- *   2. For each channel, navigate DIRECTLY to its URL (no guide re-visit per channel)
- *      - Angular JS bundle is cached after the first load — no cold-boot penalty
- *   3. Click Watch/Watch Now if the channel lands on a folio detail page first
- *   4. Wait up to 60 s for video to start
- *   5. Check HTMLVideoElement.textTracks for caption/subtitle tracks
- *   6. If CC is available but not active, click the CC button
- *   7. Assert CC mode is 'showing'
+ * Navigation strategy (important):
+ *   Navigating directly to /channel/N lands on a channel INFO page — the
+ *   video player is NOT shown automatically. The player only opens when the
+ *   user clicks a channel image in the guide.
  *
- * Results are collected for ALL channels before asserting so the full
- * pass/fail breakdown is always visible in the report, even on failure.
+ *   page.evaluate() JS .click() fires an isTrusted=false synthetic event that
+ *   Angular's router ignores. page.mouse.click(x, y) fires a real mouse event
+ *   with isTrusted=true that Angular responds to and opens the player overlay
+ *   (URL stays at /guide while the player plays over the guide).
+ *
+ * Per-channel flow:
+ *   1. Ensure we are on /guide (navigate there if URL drifted)
+ *   2. page.evaluate(): find channel img by title, scroll into view, return coords
+ *   3. page.mouse.click(x, y): real click → Angular opens player overlay
+ *   4. Poll 60 s for <video> to start
+ *   5. Check textTracks for CC
+ *   6. Press Escape to close the player overlay
+ *   7. Repeat for next channel
  */
 
 const CC_BUTTON_SELECTORS = [
@@ -51,18 +57,16 @@ interface ChannelResult {
 test.describe('Guide', () => {
   test.describe('Closed Captions', () => {
 
-    // Large timeout: 60 s/channel × 70+ channels + navigation overhead
     test.setTimeout(7_200_000); // 2 hours
 
     test('Every guide channel has closed captions', async ({ page }, testInfo) => {
 
       const guideUrl = config.watchUrl + '/guide';
 
-      // ── Step 1: Navigate to Guide to collect channel list ─────────────────
+      // ── Step 1: Navigate to Guide ─────────────────────────────────────────
       await page.goto(guideUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
-      // Wait for the guide's channel list to render (manual poll — avoids
-      // waitForFunction timeout issues that occur with test.setTimeout(7_200_000))
+      // Wait for guide surface content (partner links indicate real render)
       let guideLoaded = false;
       for (let p = 0; p < 45 && !guideLoaded; p++) {
         guideLoaded = await page.evaluate(() => {
@@ -78,13 +82,12 @@ test.describe('Guide', () => {
       }
 
       if (!guideLoaded) {
-        test.skip(true, 'Guide page did not render real content within 45 s — check URL or account access');
+        test.skip(true, 'Guide page did not render real content within 45 s');
         return;
       }
 
-      // Scroll the guide's channel column so Angular's intersection observer
-      // hydrates #list_of_channels and all .channel divs with channel data.
-      // Without this scroll the element may not exist yet in the DOM.
+      // Scroll the guide so Angular's intersection observer hydrates
+      // #list_of_channels and all .channel divs with their img elements.
       await page.evaluate(async () => {
         const col = document.querySelector(
           '.tvguide, .guide_container, .guide-container, #guide, [class*="guide_wrap"], [class*="channel_list"]'
@@ -98,7 +101,7 @@ test.describe('Guide', () => {
         target.scrollTop = 0;
       });
 
-      // Wait up to 15 s for #list_of_channels to appear after scroll
+      // Wait for #list_of_channels channel images to appear
       let listReady = false;
       for (let p = 0; p < 15 && !listReady; p++) {
         listReady = await page.evaluate(() =>
@@ -108,78 +111,14 @@ test.describe('Guide', () => {
       }
       console.log(`list_of_channels rendered: ${listReady}`);
 
-      // ── Step 2: Dump #list_of_channels for diagnostics ───────────────────
-      const listOfChannelsInfo = await page.evaluate(() => {
-        const el = document.querySelector('#list_of_channels') as HTMLElement | null;
-        if (!el) return { found: false, html: '', ngKeys: [] as string[] };
-
-        const ngKeys: string[] = [];
-        const ngCtx = (el as any).__ngContext__;
-        if (Array.isArray(ngCtx)) {
-          for (let i = 0; i < Math.min(ngCtx.length, 40); i++) {
-            const item = ngCtx[i];
-            if (item && typeof item === 'object' && !Array.isArray(item)) {
-              const keys = Object.keys(item).filter(k => k.length < 40);
-              if (keys.length > 0 && keys.length < 60) {
-                ngKeys.push(`[${i}]: ${keys.join(', ')}`);
-              }
-            } else if (Array.isArray(item) && item.length > 3 &&
-                       item[0] && typeof item[0] === 'object') {
-              const k0 = Object.keys(item[0]);
-              if (k0.some(k => /channel|partner|slug|name|url|id/i.test(k))) {
-                ngKeys.push(`[${i}] ARRAY(${item.length}): keys=${k0.slice(0, 8).join(',')} sample=${JSON.stringify(item[0]).slice(0, 150)}`);
-              }
-            }
-          }
-        }
-
-        return { found: true, html: el.outerHTML.slice(0, 2000), ngKeys };
-      });
-
-      console.log('list_of_channels found:', listOfChannelsInfo.found);
-      console.log('list_of_channels Angular context:', listOfChannelsInfo.ngKeys);
-
-      // ── Step 3: Collect channel URLs ─────────────────────────────────────
-      // Strategy A — <a href> partner links in the DOM (featured channels)
-      const domChannelLinks: Array<{ href: string; name: string }> = await page.evaluate(() => {
-        const NAV_TEXTS = new Set(
-          ['home', 'guide', 'movies', 'tv', 'my stuff', 'add-ons', 'settings', 'search', '']
-        );
-        const contentBody = document.querySelector('#content_body, .content_body');
-        const links = Array.from(
-          (contentBody ?? document).querySelectorAll('a[href]')
-        ) as HTMLAnchorElement[];
-        return links
-          .filter(a => {
-            const text = (a.innerText?.trim() ?? '').toLowerCase();
-            if (!text || NAV_TEXTS.has(text)) return false;
-            if (a.closest('.ott-sticky-header, .ott-header')) return false;
-            // Exclude settings/privacy links — they are not channels
-            try {
-              const u = new URL(a.href);
-              if (u.hostname !== location.hostname) return false;
-              if (u.pathname.startsWith('/settings')) return false;
-              if (u.hash) return false; // anchor-only links (#privacyControl etc.)
-              return true;
-            } catch { return false; }
-          })
-          .map(a => ({
-            href: a.href,
-            name: a.innerText?.trim().replace(/\n[\s\S]*/g, '').slice(0, 60) ?? '',
-          }))
-          .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i)
-          .slice(0, 200);
-      });
-
-      // Strategy B — Angular LView extraction
-      // CI confirmed: LView[26] on #list_of_channels = ARRAY(66) of channel objects
-      // with shape { display: { title, markers }, target: { pageAttributes: { networkid } } }
-      // Skip channels marked non_playable (no live stream — e.g. SVOD-only packages).
+      // ── Step 2: Collect channel list from Angular LView[26] ──────────────
+      // Using ONLY the Angular list — it covers all channels including those
+      // that also appear as featured DOM partner links at the top.
       const angularResult = await page.evaluate((): { channels: Array<{href: string; name: string}>; debug: string } => {
         const list = document.querySelector('#list_of_channels') as HTMLElement | null;
         if (!list) return { channels: [], debug: '#list_of_channels not found' };
 
-        // ── Method 1: per-.channel div ────────────────────────────────────────
+        // Method 1: per-.channel div __ngContext__
         const channelDivs = Array.from(list.querySelectorAll('.channel')) as HTMLElement[];
         const channels1: Array<{href: string; name: string}> = [];
 
@@ -216,20 +155,19 @@ test.describe('Guide', () => {
           return { channels: unique, debug: 'per-div: ' + channelDivs.length + ' divs → ' + unique.length + ' channels' };
         }
 
-        // ── Method 2: parent LView[26] index-based loop ───────────────────────
+        // Method 2: parent LView[26] index-based loop
         const pCtx = (list as any).__ngContext__;
         const arr = Array.isArray(pCtx) ? pCtx[26] : null;
         const arrLen = Array.isArray(arr) ? arr.length : 0;
 
         if (arrLen === 0) {
-          return { channels: [], debug: 'per-div=0, parent lview[26] empty (arrLen=' + arrLen + ')' };
+          return { channels: [], debug: 'per-div=0, parent lview[26] empty' };
         }
 
         const channels2: Array<{href: string; name: string}> = [];
         for (let i = 0; i < arrLen; i++) {
           const ch = arr[i];
           if (!ch || typeof ch !== 'object') continue;
-
           const name = String(
             ch.display && ch.display.title ? ch.display.title : (ch.id != null ? ch.id : '')
           ).trim();
@@ -244,54 +182,29 @@ test.describe('Guide', () => {
         }
 
         const unique2 = channels2.filter(function(v, i, a) { return a.findIndex(function(x) { return x.href === v.href; }) === i; });
-        const firstItemStr = JSON.stringify(arr[0]).slice(0, 200);
         return {
           channels: unique2,
-          debug: 'parent-lview: arrLen=' + arrLen + ' pushed=' + channels2.length + ' unique=' + unique2.length + ' firstItem=' + firstItemStr,
+          debug: 'parent-lview: arrLen=' + arrLen + ' pushed=' + channels2.length + ' unique=' + unique2.length,
         };
       });
 
       console.log('Angular LView[26]:', angularResult.debug);
-      const angularChannels = angularResult.channels;
-      console.log(`Angular channels (playable): ${angularChannels.length}`);
-      if (angularChannels.length > 0) {
-        console.log('Angular sample:', JSON.stringify(angularChannels.slice(0, 3), null, 2));
+      const channels = angularResult.channels;
+      console.log(`Channels to test: ${channels.length}`);
+      if (channels.length > 0) {
+        console.log('Sample:', JSON.stringify(channels.slice(0, 3), null, 2));
       }
 
-      // Merge DOM partner links + Angular channels; deduplicate by href
-      const channelLinks = [...domChannelLinks, ...angularChannels]
-        .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
-
-      console.log(`Channel links: dom=${domChannelLinks.length} angular=${angularChannels.length} total=${channelLinks.length}`);
-      if (channelLinks.length > 0) {
-        console.log('Sample links:', JSON.stringify(channelLinks.slice(0, 5), null, 2));
-      }
-
-      if (channelLinks.length === 0) {
-        test.skip(true, 'No channel links found via DOM or Angular LView — check console above');
+      if (channels.length === 0) {
+        test.skip(true, 'No channels found in Angular LView — check console above');
         return;
       }
-
-      type ChannelEntry = { name: string; href: string };
-      const channels: ChannelEntry[] = channelLinks.map((l, i) => ({
-        name: l.name || `Channel ${i + 1}`,
-        href: l.href,
-      }));
 
       console.log(`Total channels to test: ${channels.length}`);
 
       const results: ChannelResult[] = [];
 
-      // ── Step 4: Test each channel via DIRECT URL NAVIGATION ──────────────
-      // Navigate to each channel URL directly. The Angular JS bundle is cached
-      // in Chrome's HTTP cache after the first load, so subsequent page.goto()
-      // calls skip the network download — Angular still bootstraps but without
-      // the 30-60 s cold-boot download overhead seen in CI.
-      //
-      // This replaces the guide-click approach (clicking .channel divs via
-      // page.evaluate JS) which failed because Angular's router ignores
-      // synthetic DOM click() events from evaluate() — only real Playwright
-      // mouse events or router.navigate() calls trigger navigation.
+      // ── Step 3: Test each channel ─────────────────────────────────────────
       for (let i = 0; i < channels.length; i++) {
         const ch = channels[i];
         const result: ChannelResult = {
@@ -305,56 +218,76 @@ test.describe('Guide', () => {
         console.log(`\n[${i + 1}/${channels.length}] Testing: "${ch.name}"`);
 
         try {
-          // Navigate directly to channel URL
-          await page.goto(ch.href, { waitUntil: 'commit', timeout: 30_000 });
-
-          // Poll up to 45 s for the channel page to render.
-          // Angular re-bootstraps on each page.goto(), taking 5-20 s in CI.
-          // Accept: a <video> element, any button on the page (folio/player),
-          // or a heading/title (channel info page) — anything that isnates Angular
-          // has rendered past the loading skeleton.
-          let pageReady = false;
-          for (let p = 0; p < 45 && !pageReady; p++) {
-            pageReady = await page.evaluate(() => {
-              if (document.querySelector('video')) return true;
-              // Any button appearing means Angular rendered the channel page
-              if (document.querySelectorAll('button').length > 0) return true;
-              // Partner channel info page: has a heading or channel title
-              if (document.querySelector('h1, h2, [class*="channel_title"], [class*="channel-title"]')) return true;
-              return false;
-            }).catch(() => false);
-            if (!pageReady) await page.waitForTimeout(1_000);
+          // Ensure we're on the guide page (player close might have navigated away)
+          if (!page.url().includes('/guide')) {
+            await page.goto(guideUrl, { waitUntil: 'commit', timeout: 30_000 });
+            await page.waitForTimeout(2_000);
           }
 
-          if (!pageReady) {
-            result.skipReason = 'Channel page did not render within 45 s';
+          // Find the channel image in #list_of_channels, scroll it into view,
+          // and return its viewport coordinates.
+          // page.evaluate handles special chars in title (A&E, Crime+Investigation, etc.)
+          const coords = await page.evaluate((name: string) => {
+            const imgs = Array.from(
+              document.querySelectorAll('#list_of_channels .channel img')
+            ) as HTMLElement[];
+            const img = imgs.find(el => el.getAttribute('title') === name);
+            if (!img) return null;
+            img.scrollIntoView({ block: 'center', behavior: 'instant' });
+            const rect = img.getBoundingClientRect();
+            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+          }, ch.name);
+
+          if (!coords) {
+            result.skipReason = `"${ch.name}" img not in guide DOM`;
             console.log(`  ⏭  ${result.skipReason}`);
             results.push(result);
             continue;
           }
 
-          // Diagnostic: log what buttons are on the page (helps identify Watch button text)
-          const pageButtons = await page.evaluate(() =>
-            Array.from(document.querySelectorAll('button'))
-              .map(b => (b as HTMLButtonElement).innerText?.trim().slice(0, 40))
-              .filter(Boolean)
-              .slice(0, 10)
-          ).catch(() => [] as string[]);
-          if (pageButtons.length > 0) {
-            console.log(`  -> buttons on page: ${JSON.stringify(pageButtons)}`);
+          // Small pause to let scrollIntoView settle before clicking
+          await page.waitForTimeout(300);
+
+          // page.mouse.click() generates a real mouse event with isTrusted=true.
+          // Angular's (click) binding fires → router opens player overlay on /guide.
+          // JS element.click() / page.evaluate click() produces isTrusted=false
+          // which Angular's router ignores — that's why the previous approach failed.
+          await page.mouse.click(coords.x, coords.y);
+          await page.waitForTimeout(500);
+
+          console.log(`  -> clicked — url: ${page.url()}`);
+
+          // Diagnostic dump for first 5 channels (understand page structure)
+          if (i < 5) {
+            const diag = await page.evaluate(() => {
+              const v = document.querySelector('video') as HTMLVideoElement | null;
+              const iframes = Array.from(document.querySelectorAll('iframe'))
+                .map(f => ({ src: (f as HTMLIFrameElement).src.slice(0, 80), id: f.id }));
+              const btns = Array.from(document.querySelectorAll('button'))
+                .map(b => ({
+                  text: (b as HTMLButtonElement).innerText?.trim().slice(0, 30),
+                  aria: b.getAttribute('aria-label') || '',
+                  cls:  b.className.slice(0, 40),
+                }))
+                .filter(b => b.text || b.aria)
+                .slice(0, 8);
+              const playerEls = Array.from(document.querySelectorAll(
+                '[class*="player"], [class*="Player"], .jw-video, video-js, [class*="overlay"]'
+              )).map(el => el.className.slice(0, 60)).slice(0, 5);
+              return {
+                hasVideo: !!v,
+                videoRS:  v?.readyState ?? -1,
+                iframes,
+                buttons: btns,
+                playerEls,
+                url: location.href.slice(0, 80),
+              };
+            }).catch(() => null);
+            if (diag) console.log(`  -> diag: ${JSON.stringify(diag)}`);
           }
 
-          // Some channels land on a folio/detail page before starting playback.
-          // Look for any Watch / Watch Now / Watch Live / Play / Tune In button and click it.
-          const watchBtn = page.locator('button').filter({ hasText: /watch|play|tune/i }).first();
-          if (await watchBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-            await watchBtn.click().catch(() => {});
-            console.log(`  -> clicked Watch button`);
-            await page.waitForTimeout(1_000);
-          }
-
-          // Poll for video (60 s). Angular SPA + HLS stream init takes 10-30 s in CI.
-          // Call v.play() on each poll to override any lingering autoplay block.
+          // Poll for video (60 s). Player overlay on /guide should contain a
+          // <video> element. Call v.play() on each tick to handle autoplay blocks.
           let videoStarted = false;
           for (let poll = 0; poll < 60 && !videoStarted; poll++) {
             videoStarted = await page.evaluate(() => {
@@ -377,17 +310,19 @@ test.describe('Guide', () => {
           if (!videoStarted) {
             result.skipReason = 'Video did not start within 60 s';
             console.log(`  ⏭  Skipped`);
+            // Close any open overlay before next channel
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(300);
             results.push(result);
             continue;
           }
 
           result.videoStarted = true;
 
-          // ── Watch for VIDEO_PLAY_SECONDS ──────────────────────────────────
           console.log(`  ▶  Playing for ${config.videoPlaySeconds} s…`);
           await page.waitForTimeout(config.videoPlaySeconds * 1_000);
 
-          // ── Check CC availability via textTracks ──────────────────────────
+          // Check CC via textTracks
           const trackInfo = await page.evaluate(() => {
             const v = document.querySelector('video') as HTMLVideoElement | null;
             const tracks = Array.from(v?.textTracks ?? []);
@@ -404,12 +339,8 @@ test.describe('Guide', () => {
           if (!trackInfo.available) {
             result.skipReason = 'No caption/subtitle tracks on this channel';
             console.log(`  ✗  No CC tracks found`);
-            results.push(result);
-            continue;
-          }
-
-          // ── Enable CC via player button if not already showing ────────────
-          if (!trackInfo.active) {
+          } else if (!trackInfo.active) {
+            // Hover to reveal controls then click CC button
             const videoBox = await page.locator('video').first().boundingBox();
             if (videoBox) {
               await page.mouse.move(
@@ -429,28 +360,33 @@ test.describe('Guide', () => {
                 break;
               }
             }
+
+            const ccActive = await page.evaluate(() => {
+              const v = document.querySelector('video') as HTMLVideoElement | null;
+              return Array.from(v?.textTracks ?? [])
+                .some(t => (t.kind === 'captions' || t.kind === 'subtitles') && t.mode === 'showing');
+            });
+
+            result.ccActive = ccActive;
+            console.log(`  ${ccActive ? '✅' : '❌'} CC active: ${ccActive}`);
+          } else {
+            result.ccActive = true;
+            console.log(`  ✅ CC already active`);
           }
-
-          // ── Confirm CC is now active ──────────────────────────────────────
-          const ccActive = await page.evaluate(() => {
-            const v = document.querySelector('video') as HTMLVideoElement | null;
-            return Array.from(v?.textTracks ?? [])
-              .some(t => (t.kind === 'captions' || t.kind === 'subtitles') && t.mode === 'showing');
-          });
-
-          result.ccActive = ccActive;
-          const icon = ccActive ? '✅' : '❌';
-          console.log(`  ${icon} CC active: ${ccActive}`);
 
         } catch (err: any) {
           result.skipReason = `Error: ${err.message?.slice(0, 120)}`;
           console.log(`  ⚠  ${result.skipReason}`);
         }
 
+        // Close player overlay (Escape) so guide is ready for the next channel
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(500);
+
         results.push(result);
       }
 
-      // ── Step 5: Build and attach full results report ──────────────────────
+      // ── Step 4: Report ────────────────────────────────────────────────────
       const passed  = results.filter(r => r.ccActive).length;
       const failed  = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive).length;
       const noCc    = results.filter(r => r.videoStarted && !r.ccAvailable).length;
@@ -494,7 +430,7 @@ test.describe('Guide', () => {
         path: path.join(screenshotDir, `guide-cc-final-${Date.now()}.png`),
       });
 
-      // ── Step 6: Assert ────────────────────────────────────────────────────
+      // ── Step 5: Assert ────────────────────────────────────────────────────
       const ccFailures   = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive);
       const noCcChannels = results.filter(r => r.videoStarted && !r.ccAvailable);
 
