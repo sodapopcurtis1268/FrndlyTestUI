@@ -207,79 +207,72 @@ test.describe('Guide', () => {
       });
 
       // Strategy B — Angular LView extraction
-      // The CI log confirmed: LView[26] on #list_of_channels is an ARRAY(66) whose
-      // items have shape { display: { imageUrl }, id, metadata, target, template }.
-      // Previous extraction failed because the key filter looked for 'channel/slug/name'
-      // but none of those words appear in the actual keys. Now we detect the array by
-      // checking display.imageUrl, then log the full first item so we can see what
-      // 'id' and 'target' contain.
-      const angularChannels: Array<{ href: string; name: string }> = await page.evaluate(() => {
-        const results: Array<{ href: string; name: string }> = [];
-        const candidates = Array.from(document.querySelectorAll('#list_of_channels, .list_of_channels'));
-        for (const el of candidates) {
-          const ctx = (el as any).__ngContext__;
-          if (!Array.isArray(ctx)) continue;
-          for (const item of ctx) {
-            if (!Array.isArray(item) || item.length < 5) continue;
-            const first = item[0];
-            if (!first || typeof first !== 'object') continue;
-            // Frndly TV channel shape: { display: { imageUrl }, id, metadata, target, template }
-            if (!first.display?.imageUrl) continue;
+      // CI confirmed: LView[26] on #list_of_channels = ARRAY(66) with shape
+      //   { display: { imageUrl }, id, metadata, target, template }
+      // 'target' is an object. Previous attempt produced /channel// meaning
+      // target.url = '/channel/' (no slug). Return full first-item JSON to
+      // Node.js level (NOT browser console) so it appears in CI stdout.
+      const angularResult = await page.evaluate(() => {
+        const el = document.querySelector('#list_of_channels') as any;
+        const ctx = el?.__ngContext__;
+        if (!Array.isArray(ctx)) return { channels: [] as Array<{href:string;name:string}>, debug: 'no Angular context on #list_of_channels' };
 
-            // Log the FULL first two items (no slice) so we can see target/id shape
-            console.log('Angular channel[0]:', JSON.stringify(first));
-            if (item[1]) console.log('Angular channel[1]:', JSON.stringify(item[1]));
-
-            for (const ch of item) {
-              // target is an OBJECT (not a string) — drill into known path properties
-              const rawTarget = ch.target;
-              let targetStr = '';
-              if (typeof rawTarget === 'string') {
-                targetStr = rawTarget;
-              } else if (rawTarget && typeof rawTarget === 'object') {
-                // Try every plausible property name for the navigable path/slug
-                targetStr = rawTarget.url       ?? rawTarget.path      ??
-                            rawTarget.slug      ?? rawTarget.href       ??
-                            rawTarget.routerLink ?? rawTarget.link      ??
-                            rawTarget.partnerSlug ?? rawTarget.partner_slug ??
-                            rawTarget.channelSlug ?? rawTarget.channel_slug ??
-                            '';
-                if (!targetStr && Array.isArray(rawTarget.commands)) {
-                  targetStr = rawTarget.commands.join('/');
-                }
-                // If still empty, stringify the whole thing so the log shows the shape
-                if (!targetStr) console.log('  target object keys:', Object.keys(rawTarget).join(', '), '| value:', JSON.stringify(rawTarget).slice(0, 200));
-              }
-
-              // id may also be an object — guard against that
-              const rawId = ch.id;
-              const idStr = (rawId !== null && rawId !== undefined && typeof rawId !== 'object')
-                ? String(rawId) : '';
-
-              const name: string =
-                ch.display?.title  ??
-                ch.metadata?.name  ??
-                ch.metadata?.title ??
-                idStr;
-
-              let href = '';
-              if (targetStr.startsWith('http')) {
-                href = targetStr;
-              } else if (targetStr.includes('/')) {
-                href = `${window.location.origin}${targetStr.startsWith('/') ? '' : '/'}${targetStr}`;
-              } else if (targetStr) {
-                href = `${window.location.origin}/partner/${targetStr}`;
-              } else if (idStr) {
-                href = `${window.location.origin}/partner/${idStr}`;
-              }
-
-              if (href && name) results.push({ href, name: String(name) });
-            }
-            break; // found the channel array — no need to scan further
-          }
+        const arr = ctx[26];
+        if (!Array.isArray(arr) || !arr[0]?.display?.imageUrl) {
+          return { channels: [], debug: `LView[26] unexpected: ${JSON.stringify(arr?.[0]).slice(0, 300)}` };
         }
-        return results.filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
+
+        // Return full first item to Node.js so we see it in CI stdout
+        const debug = JSON.stringify(arr[0]);
+
+        const channels: Array<{href:string;name:string}> = [];
+        for (const ch of arr) {
+          const name: string = ch.display?.title ?? ch.metadata?.name ?? String(ch.id ?? '');
+
+          // Try every nested string/array in target to find the slug
+          function extractSlug(val: any, depth = 0): string {
+            if (depth > 4 || val === null || val === undefined) return '';
+            if (typeof val === 'string' && val.length > 1) return val;
+            if (typeof val === 'number') return String(val);
+            if (Array.isArray(val)) {
+              // Angular routerLink commands: ['/partner', 'slug'] → '/partner/slug'
+              const joined = val.map(String).join('/');
+              if (joined.length > 1) return joined;
+            }
+            if (typeof val === 'object') {
+              for (const v of Object.values(val)) {
+                const s = extractSlug(v, depth + 1);
+                if (s && s !== '[object Object]') return s;
+              }
+            }
+            return '';
+          }
+
+          let slug = extractSlug(ch.target);
+
+          // Also check metadata and id
+          if (!slug) slug = ch.metadata?.partner_slug ?? ch.metadata?.slug ?? ch.metadata?.channel_slug ?? '';
+          if (!slug && ch.id !== null && ch.id !== undefined && typeof ch.id !== 'object') slug = String(ch.id);
+
+          if (!slug || !name) continue;
+
+          let href = '';
+          if (slug.startsWith('http'))        href = slug;
+          else if (slug.startsWith('/'))      href = `${window.location.origin}${slug}`;
+          else                                href = `${window.location.origin}/partner/${slug}`;
+
+          channels.push({ href, name });
+        }
+
+        return {
+          channels: channels.filter((v, i, a) => a.findIndex(x => x.href === v.href) === i),
+          debug,
+        };
       });
+
+      // These log at Node.js level — they WILL appear in CI stdout
+      console.log('Angular LView[26] firstItem (full):', angularResult.debug);
+      const angularChannels = angularResult.channels;
       console.log(`Angular component channels: ${angularChannels.length}`);
       if (angularChannels.length > 0) {
         console.log('Angular sample:', JSON.stringify(angularChannels.slice(0, 3), null, 2));
@@ -288,60 +281,9 @@ test.describe('Guide', () => {
       const channelLinks = [...domChannelLinks, ...angularChannels, ...apiChannels]
         .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
 
-      console.log(`Channel links: dom=${domChannelLinks.length} angular=${angularChannels.length} api=${apiChannels.length} total=${channelLinks.length}`);
+      console.log(`Channel links: dom=${domChannelLinks.length} angular=${angularChannels.length} api=${apiChannels.length} total=${channelLinks.length}`)
       if (channelLinks.length > 0) {
         console.log('Sample links:', JSON.stringify(channelLinks.slice(0, 5), null, 2));
-      }
-
-      // Strategy C — click-and-capture: for channel rows in #list_of_channels
-      // that don't have <a href>, click them and read the resulting URL.
-      // This is slower (~2 s/channel) but guaranteed to work for any click binding.
-      if (channelLinks.length < 10) {
-        console.log('Fewer than 10 href channels — attempting click-and-capture for guide rows');
-        const knownHrefs = new Set(channelLinks.map(l => l.href));
-
-        // The guide renders channels as .channel divs (containing an <img title="Name">)
-        // inside .channel_section. Skip .coach_screen_2 (tutorial overlay, not a channel).
-        const rowSelectors = [
-          '#list_of_channels .channel_section .channel',
-          '#list_of_channels .channel',
-          '.list_of_channels .channel',
-          '#list_of_channels .channel_section > *:not(.coach_screen_2)',
-        ];
-
-        for (const sel of rowSelectors) {
-          const count = await page.locator(sel).count();
-          if (count === 0) continue;
-          console.log(`Click-capture using "${sel}" — ${count} rows`);
-
-          for (let idx = 0; idx < count; idx++) {
-            const row = page.locator(sel).nth(idx);
-            // Skip rows that already have an <a href> we've captured
-            const existingHref = await row.locator('a[href*="/partner/"]').getAttribute('href').catch(() => null);
-            if (existingHref && knownHrefs.has(existingHref)) continue;
-
-            await row.scrollIntoViewIfNeeded().catch(() => {});
-            await row.click({ timeout: 5_000 }).catch(() => {});
-            await page.waitForTimeout(1_500);
-
-            const url = page.url();
-            if (url !== guideUrl && !knownHrefs.has(url) && url.includes('/partner/')) {
-              const slug = url.split('/partner/')[1]?.split(/[?#]/)[0] ?? '';
-              // Prefer img[title] as channel name; fall back to slug
-              const imgTitle = await row.locator('img[title]').getAttribute('title').catch(() => null);
-              const name = imgTitle ?? slug.replace(/_/g, ' ');
-              channelLinks.push({ href: url, name });
-              knownHrefs.add(url);
-              console.log(`  Captured: ${url}`);
-              // Return to guide for next channel
-              await page.goto(guideUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-              await page.waitForSelector('#list_of_channels', { timeout: 20_000 }).catch(() => {});
-              await page.waitForTimeout(500);
-            }
-          }
-          if (channelLinks.length >= 10) break;
-        }
-        console.log(`After click-capture: ${channelLinks.length} total channels`);
       }
 
       // ── Step 4: Build final channel list from all collected sources ──────────
