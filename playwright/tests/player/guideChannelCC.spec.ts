@@ -343,12 +343,19 @@ test.describe('Guide', () => {
 
           // Poll for video start — manual loop avoids waitForFunction timeout
           // issues caused by test.setTimeout(7_200_000) overriding page defaults.
+          // On each poll, if a video element is present but paused (autoplay
+          // blocked despite --autoplay-policy flag), call v.play() explicitly.
           console.log(`  -> polling for video…`);
           let videoStarted = false;
           for (let poll = 0; poll < 30 && !videoStarted; poll++) {
             videoStarted = await page.evaluate(() => {
               const v = document.querySelector('video') as HTMLVideoElement | null;
-              return !!(v && v.readyState >= 2 && (v.currentTime > 0 || !v.paused));
+              if (!v) return false;
+              // Belt-and-suspenders: if the video loaded but is paused, start it.
+              if (v.paused && v.readyState >= 1) {
+                v.play().catch(() => { /* ignore DRM / policy errors */ });
+              }
+              return v.readyState >= 2 && (v.currentTime > 0 || !v.paused);
             }).catch(() => false);
             if (!videoStarted) await page.waitForTimeout(1_000);
           }

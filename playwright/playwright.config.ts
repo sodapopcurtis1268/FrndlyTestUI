@@ -134,7 +134,13 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         channel: 'chrome',
         storageState: '.auth/user.json',
-        video: 'on',
+        video: 'retain-on-failure',
+        // Allow video autoplay without a prior user gesture.
+        // page.goto() does not count as a user interaction so Chrome's default
+        // autoplay policy silently blocks live streams from playing.
+        launchOptions: {
+          args: ['--autoplay-policy=no-user-gesture-required'],
+        },
       },
       dependencies: ['setup'],
     },
