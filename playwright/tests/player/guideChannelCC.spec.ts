@@ -208,50 +208,87 @@ test.describe('Guide', () => {
 
       // Strategy B — Angular LView extraction
       // CI confirmed: LView[26] on #list_of_channels = ARRAY(66) with shape
-      //   { display: { imageUrl }, id, metadata, target, template }
-      // 'target' is an object. Previous attempt produced /channel// meaning
-      // target.url = '/channel/' (no slug). Return full first-item JSON to
-      // Node.js level (NOT browser console) so it appears in CI stdout.
-      const angularResult = await page.evaluate(() => {
-        const el = document.querySelector('#list_of_channels') as any;
-        const ctx = el?.__ngContext__;
-        if (!Array.isArray(ctx)) return { channels: [] as Array<{href:string;name:string}>, debug: 'no Angular context on #list_of_channels' };
+      //   { display: { imageUrl, title }, id, metadata, target: { pageAttributes: { networkid } } }
+      // Two-method approach to work around for...of producing 0 on Angular's internal array:
+      //   1. Per-.channel div: each *ngFor child has __ngContext__ containing the item object
+      //   2. Parent LView[26] with index-based loop as fallback
+      const angularResult = await page.evaluate((): { channels: Array<{href: string; name: string}>; debug: string } => {
+        const list = document.querySelector('#list_of_channels') as HTMLElement | null;
+        if (!list) return { channels: [], debug: '#list_of_channels not found' };
 
-        const arr = ctx[26];
-        if (!Array.isArray(arr) || !arr[0]?.display?.imageUrl) {
-          return { channels: [], debug: `LView[26] unexpected: ${JSON.stringify(arr?.[0]).slice(0, 300)}` };
+        // ── Method 1: per-.channel div ────────────────────────────────────────
+        // Angular *ngFor attaches each iteration's LView to the rendered child
+        // elements. The channel img title gives the name; scanning the div's
+        // __ngContext__ gives the channel object with networkId.
+        const channelDivs = Array.from(list.querySelectorAll('.channel')) as HTMLElement[];
+        const channels1: Array<{href: string; name: string}> = [];
+
+        for (let d = 0; d < channelDivs.length; d++) {
+          const div = channelDivs[d];
+          const img = div.querySelector('img[title]') as HTMLImageElement | null;
+          const domName = img ? (img.getAttribute('title') ?? '') : '';
+
+          const divCtx = (div as any).__ngContext__;
+          let ch: any = null;
+          if (Array.isArray(divCtx)) {
+            for (let j = 0; j < Math.min(divCtx.length, 50); j++) {
+              const item = divCtx[j];
+              if (!item || typeof item !== 'object') continue;
+              if (!Array.isArray(item) && item.display && item.display.imageUrl) { ch = item; break; }
+              if (item.$implicit && item.$implicit.display && item.$implicit.display.imageUrl) { ch = item.$implicit; break; }
+            }
+          }
+
+          const name = domName || String(ch && ch.display && ch.display.title ? ch.display.title : '');
+          const networkId = String(
+            (ch && ch.target && ch.target.pageAttributes && ch.target.pageAttributes.networkid)
+              ? ch.target.pageAttributes.networkid
+              : (ch && ch.metadata && ch.metadata.id ? ch.metadata.id : '')
+          ).trim();
+
+          if (name && networkId) {
+            channels1.push({ name, href: window.location.origin + '/channel/' + networkId });
+          }
         }
 
-        // Return full first item to Node.js so we see it in CI stdout
-        const debug = JSON.stringify(arr[0]);
-
-        // Data shape confirmed:
-        //   target.pageAttributes.networkid  = "31"  (channel's numeric ID)
-        //   target.path                      = "channel//"  (unfilled template → /channel/{networkid})
-        //   display.markers.special.value    = "non_playable"  (skip these)
-        //   display.title                    = "A&E"
-
-        const channels: Array<{href:string;name:string}> = [];
-        for (const ch of arr) {
-          // Note: non_playable marker means "cannot DVR/record", NOT "cannot watch live"
-          // Do not skip based on this marker.
-          const name: string = ch.display?.title ?? String(ch.id ?? '');
-          // networkid is the reliable channel identifier
-          const networkId: string =
-            ch.target?.pageAttributes?.networkid ??
-            ch.metadata?.id ??
-            (typeof ch.id !== 'object' ? String(ch.id ?? '') : '');
-
-          if (!networkId || !name) continue;
-
-          // target.path = "channel//" → real URL is /channel/{networkId}
-          const href = `${window.location.origin}/channel/${networkId}`;
-          channels.push({ href, name });
+        if (channels1.length > 0) {
+          const unique = channels1.filter(function(v, i, a) { return a.findIndex(function(x) { return x.href === v.href; }) === i; });
+          return { channels: unique, debug: 'per-div: ' + channelDivs.length + ' divs → ' + unique.length + ' channels' };
         }
 
+        // ── Method 2: parent LView[26] index-based loop ───────────────────────
+        // Fall back to the parent element's LView at index 26 which holds the
+        // full channel array. Use an indexed loop (not for...of) to be safe.
+        const pCtx = (list as any).__ngContext__;
+        const arr = Array.isArray(pCtx) ? pCtx[26] : null;
+        const arrLen = Array.isArray(arr) ? arr.length : 0;
+
+        if (arrLen === 0) {
+          return { channels: [], debug: 'per-div=0, parent lview[26] empty (arrLen=' + arrLen + ')' };
+        }
+
+        const channels2: Array<{href: string; name: string}> = [];
+        for (let i = 0; i < arrLen; i++) {
+          const ch = arr[i];
+          if (!ch || typeof ch !== 'object') continue;
+          const name = String(
+            ch.display && ch.display.title ? ch.display.title : (ch.id != null ? ch.id : '')
+          ).trim();
+          const networkId = String(
+            ch.target && ch.target.pageAttributes && ch.target.pageAttributes.networkid
+              ? ch.target.pageAttributes.networkid
+              : (ch.metadata && ch.metadata.id ? ch.metadata.id : '')
+          ).trim();
+          if (name && networkId) {
+            channels2.push({ name, href: window.location.origin + '/channel/' + networkId });
+          }
+        }
+
+        const unique2 = channels2.filter(function(v, i, a) { return a.findIndex(function(x) { return x.href === v.href; }) === i; });
+        const firstItemStr = JSON.stringify(arr[0]).slice(0, 200);
         return {
-          channels: channels.filter((v, i, a) => a.findIndex(x => x.href === v.href) === i),
-          debug,
+          channels: unique2,
+          debug: 'parent-lview: arrLen=' + arrLen + ' pushed=' + channels2.length + ' unique=' + unique2.length + ' firstItem=' + firstItemStr,
         };
       });
 
