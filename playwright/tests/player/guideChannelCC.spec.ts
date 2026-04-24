@@ -62,35 +62,7 @@ test.describe('Guide', () => {
 
       const guideUrl = config.watchUrl + '/guide';
 
-      // ── Step 1: Navigate to Guide — intercept API responses for channel data
-      // Many OTT apps return channel lists via a JSON API; capture those so we
-      // can navigate to watch URLs directly instead of clicking DOM elements.
-      const apiChannels: Array<{ name: string; href: string }> = [];
-      page.on('response', async (response) => {
-        const ct = response.headers()['content-type'] ?? '';
-        if (!ct.includes('json')) return;
-        try {
-          const body = await response.json();
-          // Walk common envelope shapes to find an array of items
-          const candidates = [
-            body,
-            body.data, body.channels, body.items, body.results,
-            body.content, body.payload, body.response, body.list,
-          ];
-          const items: any[] = (candidates.find(c => Array.isArray(c) && c.length >= 2) ?? []);
-          if (items.length < 2) return;
-          const url = response.url();
-          console.log(`API hit: ${url.slice(0, 120)} — ${items.length} items | keys: ${Object.keys(items[0] ?? {}).join(', ')}`);
-          for (const item of items) {
-            const href = item.watch_url ?? item.watchUrl ?? item.url
-                       ?? item.stream_url ?? item.streamUrl ?? item.partner_url ?? '';
-            const name = item.channel_name ?? item.channelName ?? item.name
-                       ?? item.title ?? item.channel_title ?? '';
-            if (href && name) apiChannels.push({ name, href });
-          }
-        } catch { /* ignore parse errors */ }
-      });
-
+      // ── Step 1: Navigate to Guide ─────────────────────────────────────────────
       await page.goto(guideUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
       // Wait for REAL channel content — the skeleton phase shows a gradient on every
@@ -300,17 +272,17 @@ test.describe('Guide', () => {
         console.log('Angular sample:', JSON.stringify(angularChannels.slice(0, 3), null, 2));
       }
 
-      const channelLinks = [...domChannelLinks, ...angularChannels, ...apiChannels]
+      const channelLinks = [...domChannelLinks, ...angularChannels]
         .filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
 
-      console.log(`Channel links: dom=${domChannelLinks.length} angular=${angularChannels.length} api=${apiChannels.length} total=${channelLinks.length}`)
+      console.log(`Channel links: dom=${domChannelLinks.length} angular=${angularChannels.length} total=${channelLinks.length}`)
       if (channelLinks.length > 0) {
         console.log('Sample links:', JSON.stringify(channelLinks.slice(0, 5), null, 2));
       }
 
       // ── Step 4: Build final channel list from all collected sources ──────────
       if (channelLinks.length === 0) {
-        test.skip(true, 'No channel links found via DOM, Angular context, API, or click-capture — check console above');
+        test.skip(true, 'No channel links found via DOM or Angular LView — check console above');
         return;
       }
 
