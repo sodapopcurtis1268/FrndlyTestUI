@@ -330,6 +330,10 @@ test.describe('Guide', () => {
             'a:has-text("Watch")',
           ].join(', ')).first();
 
+          // Create a user gesture so autoplay policy never blocks us, regardless
+          // of whether the --autoplay-policy flag was inherited by Chrome.
+          await page.click('body', { timeout: 5_000 }).catch(() => {});
+
           // Give Angular more time to bootstrap after 'commit' navigation (20 s)
           console.log(`  → checking folio…`);
           const folioAppeared = await folioBtn.waitFor({ state: 'visible', timeout: 20_000 })
@@ -359,9 +363,16 @@ test.describe('Guide', () => {
             }).catch(() => false);
             if (!videoStarted) await page.waitForTimeout(1_000);
           }
-          console.log(`  -> video poll done: started=${videoStarted}`);
+          console.log(`  -> video poll done: started=${videoStarted} url=${page.url()}`);
 
           if (!videoStarted) {
+            // Diagnose what is actually on the page
+            const videoState = await page.evaluate(() => {
+              const v = document.querySelector('video') as HTMLVideoElement | null;
+              if (!v) return 'no <video> element';
+              return `readyState=${v.readyState} paused=${v.paused} currentTime=${v.currentTime.toFixed(2)} error=${v.error?.code ?? 'none'} src=${v.currentSrc.slice(0, 80)}`;
+            }).catch(() => 'evaluate failed');
+            console.log(`  -> page="${await page.title().catch(() => '?')}" video: ${videoState}`);
             result.skipReason = 'Video did not start within 30 s';
             console.log(`  ⏭  Skipped — ${result.skipReason}`);
             results.push(result);
