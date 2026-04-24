@@ -206,32 +206,54 @@ test.describe('Guide', () => {
           .slice(0, 200);
       });
 
-      // Strategy B — Angular component state: extract channel list from LView
+      // Strategy B — Angular LView extraction
+      // The CI log confirmed: LView[26] on #list_of_channels is an ARRAY(66) whose
+      // items have shape { display: { imageUrl }, id, metadata, target, template }.
+      // Previous extraction failed because the key filter looked for 'channel/slug/name'
+      // but none of those words appear in the actual keys. Now we detect the array by
+      // checking display.imageUrl, then log the full first item so we can see what
+      // 'id' and 'target' contain.
       const angularChannels: Array<{ href: string; name: string }> = await page.evaluate(() => {
         const results: Array<{ href: string; name: string }> = [];
-        // Walk every element with an Angular context, looking for a channel array
-        const candidates = Array.from(document.querySelectorAll(
-          '#list_of_channels, .list_of_channels, ott-guide-channel, [class*="tvguide"]'
-        ));
+        const candidates = Array.from(document.querySelectorAll('#list_of_channels, .list_of_channels'));
         for (const el of candidates) {
           const ctx = (el as any).__ngContext__;
           if (!Array.isArray(ctx)) continue;
           for (const item of ctx) {
-            if (!Array.isArray(item) || item.length < 3) continue;
+            if (!Array.isArray(item) || item.length < 5) continue;
             const first = item[0];
             if (!first || typeof first !== 'object') continue;
-            const keys = Object.keys(first);
-            if (!keys.some(k => /channel|partner|slug|name/i.test(k))) continue;
+            // Frndly TV channel shape: { display: { imageUrl }, id, metadata, target, template }
+            if (!first.display?.imageUrl) continue;
+
+            // Log the full first item so we can see what id and target look like
+            console.log('Angular channel[0] full:', JSON.stringify(first).slice(0, 600));
+
             for (const ch of item) {
-              const slug = ch.partner_slug ?? ch.slug ?? ch.channel_slug ?? ch.id ?? '';
-              const name = ch.channel_name ?? ch.name ?? ch.title ?? slug;
-              if (slug && name) {
-                results.push({
-                  href: `${window.location.origin}/partner/${slug}`,
-                  name: String(name),
-                });
+              const target: string = String(ch.target ?? '');
+              const id:     string = String(ch.id     ?? '');
+              // display.title is the channel name if present; fall back to id
+              const name: string =
+                ch.display?.title    ??
+                ch.metadata?.name    ??
+                ch.metadata?.title   ??
+                id;
+
+              // target may be a full URL, a path (/partner/slug), or just a slug
+              let href = '';
+              if (target.startsWith('http')) {
+                href = target;
+              } else if (target.includes('/')) {
+                href = `${window.location.origin}${target.startsWith('/') ? '' : '/'}${target}`;
+              } else if (target) {
+                href = `${window.location.origin}/partner/${target}`;
+              } else if (id) {
+                href = `${window.location.origin}/partner/${id}`;
               }
+
+              if (href && name) results.push({ href, name: String(name) });
             }
+            break; // found the channel array — no need to scan further
           }
         }
         return results.filter((v, i, arr) => arr.findIndex(x => x.href === v.href) === i);
@@ -256,12 +278,13 @@ test.describe('Guide', () => {
         console.log('Fewer than 10 href channels — attempting click-and-capture for guide rows');
         const knownHrefs = new Set(channelLinks.map(l => l.href));
 
-        // Candidate selectors for clickable channel rows (children of the guide container)
+        // The guide renders channels as .channel divs (containing an <img title="Name">)
+        // inside .channel_section. Skip .coach_screen_2 (tutorial overlay, not a channel).
         const rowSelectors = [
-          '#list_of_channels .channel_section > *',
-          '#list_of_channels > *:not(.channels_time_header)',
-          '.tvguide > *',
-          '.list_of_channels > *',
+          '#list_of_channels .channel_section .channel',
+          '#list_of_channels .channel',
+          '.list_of_channels .channel',
+          '#list_of_channels .channel_section > *:not(.coach_screen_2)',
         ];
 
         for (const sel of rowSelectors) {
@@ -282,7 +305,10 @@ test.describe('Guide', () => {
             const url = page.url();
             if (url !== guideUrl && !knownHrefs.has(url) && url.includes('/partner/')) {
               const slug = url.split('/partner/')[1]?.split(/[?#]/)[0] ?? '';
-              channelLinks.push({ href: url, name: slug.replace(/_/g, ' ') });
+              // Prefer img[title] as channel name; fall back to slug
+              const imgTitle = await row.locator('img[title]').getAttribute('title').catch(() => null);
+              const name = imgTitle ?? slug.replace(/_/g, ' ');
+              channelLinks.push({ href: url, name });
               knownHrefs.add(url);
               console.log(`  Captured: ${url}`);
               // Return to guide for next channel
