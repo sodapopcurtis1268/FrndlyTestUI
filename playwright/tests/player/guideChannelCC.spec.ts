@@ -202,6 +202,34 @@ test.describe('Guide', () => {
 
       console.log(`Total channels to test: ${channels.length}`);
 
+      // ── One-time diagnostic: dump rt_block structure ─────────────────────
+      // This tells us whether rt_block is a subscription gate, a wrapper
+      // container, or a positioned overlay — critical for choosing click strategy.
+      const rtBlockDiag = await page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll('[class*="rt_block"],[id*="rt_block"]')) as HTMLElement[];
+        if (els.length === 0) return { count: 0, info: [] as object[] };
+        return {
+          count: els.length,
+          info: els.slice(0, 3).map(el => {
+            const cs = window.getComputedStyle(el);
+            return {
+              tag:       el.tagName,
+              cls:       el.className,
+              position:  cs.position,
+              zIndex:    cs.zIndex,
+              pe:        cs.pointerEvents,
+              w:         cs.width,
+              h:         cs.height,
+              top:       cs.top,
+              left:      cs.left,
+              children:  el.children.length,
+              html:      el.innerHTML.slice(0, 300),
+            };
+          }),
+        };
+      });
+      console.log('rt_block diagnostic:', JSON.stringify(rtBlockDiag, null, 2));
+
       const results: ChannelResult[] = [];
 
       // ── Step 3: Test each channel ─────────────────────────────────────────
