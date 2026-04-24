@@ -233,9 +233,8 @@ test.describe('Guide', () => {
 
         const channels: Array<{href:string;name:string}> = [];
         for (const ch of arr) {
-          // Skip channels that cannot be played
-          if (ch.display?.markers?.special?.value === 'non_playable') continue;
-
+          // Note: non_playable marker means "cannot DVR/record", NOT "cannot watch live"
+          // Do not skip based on this marker.
           const name: string = ch.display?.title ?? String(ch.id ?? '');
           // networkid is the reliable channel identifier
           const networkId: string =
