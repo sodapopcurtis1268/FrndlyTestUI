@@ -307,12 +307,15 @@ test.describe('Guide', () => {
           ccActive:     false,
         };
 
-        console.log(`\n[${i + 1}/${channels.length}] Testing: "${ch.name}"`);
+        console.log(`\n[${i + 1}/${channels.length}] Testing: "${ch.name}" — ${ch.href}`);
 
         try {
-          // All channels now have an href (from DOM links, Angular context, API,
-          // or click-capture). Navigate directly.
-          await page.goto(ch.href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+          // 'commit' resolves as soon as the server responds — before Angular
+          // bootstraps — which avoids the hang caused by domcontentloaded waiting
+          // for deferred scripts in the SPA shell.
+          console.log(`  → goto…`);
+          await page.goto(ch.href, { waitUntil: 'commit', timeout: 30_000 });
+          console.log(`  → landed: ${page.url()}`);
 
           // Handle channel detail / folio page — /partner/* pages require
           // clicking Watch before playback starts. Extend timeout to 12 s
@@ -327,15 +330,18 @@ test.describe('Guide', () => {
             'a:has-text("Watch")',
           ].join(', ')).first();
 
+          console.log(`  → checking folio…`);
           const folioAppeared = await folioBtn.waitFor({ state: 'visible', timeout: 12_000 })
             .then(() => true).catch(() => false);
 
           if (folioAppeared) {
-            console.log(`  🎬 Folio appeared — clicking watch button`);
-            await folioBtn.click();
+            console.log(`  -> folio found — clicking watch button`);
+            await folioBtn.click({ timeout: 20_000 });
+            console.log(`  -> post-click URL: ${page.url()}`);
           }
 
           // Wait for video element to start playing
+          console.log(`  -> waiting for video…`);
           const videoStarted = await page.waitForFunction(() => {
             const v = document.querySelector('video') as HTMLVideoElement | null;
             return v !== null && v.readyState >= 2 && (v.currentTime > 0 || !v.paused);
@@ -391,8 +397,8 @@ test.describe('Guide', () => {
               const btn = page.locator(sel).first();
               const visible = await btn.isVisible({ timeout: 500 }).catch(() => false);
               if (visible) {
-                await btn.click();
-                console.log(`  🔘 CC button clicked (${sel})`);
+                await btn.click({ timeout: 5_000 });
+                console.log(`  -> CC button clicked (${sel})`);
                 await page.waitForTimeout(800);
                 break;
               }
