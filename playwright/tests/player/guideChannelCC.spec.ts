@@ -259,12 +259,14 @@ test.describe('Guide', () => {
           // Small pause to let scrollIntoView settle before clicking
           await page.waitForTimeout(300);
 
-          // Disable pointer-events on overlay_shadow elements so the real mouse
+          // Disable pointer-events on overlay/blocker elements so the real mouse
           // click (isTrusted=true) reaches the channel img underneath.
-          // These fixed/absolute overlays cover the guide and intercept clicks.
+          // rt_block and overlay_shadow are fixed/absolute divs that cover the
+          // guide and intercept clicks without forwarding Angular events.
           await page.evaluate(() => {
-            document.querySelectorAll<HTMLElement>('[class*="overlay_shadow"], [id*="overlay_shadow"]')
-              .forEach(el => { (el as any).__origPE = el.style.pointerEvents; el.style.pointerEvents = 'none'; });
+            document.querySelectorAll<HTMLElement>(
+              '[class*="overlay_shadow"], [id*="overlay_shadow"], [class*="rt_block"], [id*="rt_block"]'
+            ).forEach(el => { (el as any).__origPE = el.style.pointerEvents; el.style.pointerEvents = 'none'; });
           });
 
           // page.mouse.click() generates a real mouse event with isTrusted=true.
@@ -275,8 +277,9 @@ test.describe('Guide', () => {
 
           // Restore overlay pointer-events immediately after the click
           await page.evaluate(() => {
-            document.querySelectorAll<HTMLElement>('[class*="overlay_shadow"], [id*="overlay_shadow"]')
-              .forEach(el => { el.style.pointerEvents = (el as any).__origPE ?? ''; });
+            document.querySelectorAll<HTMLElement>(
+              '[class*="overlay_shadow"], [id*="overlay_shadow"], [class*="rt_block"], [id*="rt_block"]'
+            ).forEach(el => { el.style.pointerEvents = (el as any).__origPE ?? ''; });
           });
 
           await page.waitForTimeout(500);
