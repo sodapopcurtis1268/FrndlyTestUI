@@ -199,11 +199,6 @@ test.describe('Guide', () => {
             }
           }
 
-          // Skip non_playable channels (SVOD-only, no live stream)
-          if (ch && ch.display && ch.display.markers &&
-              ch.display.markers.special &&
-              ch.display.markers.special.value === 'non_playable') continue;
-
           const name = domName || String(ch && ch.display && ch.display.title ? ch.display.title : '');
           const networkId = String(
             (ch && ch.target && ch.target.pageAttributes && ch.target.pageAttributes.networkid)
@@ -234,11 +229,6 @@ test.describe('Guide', () => {
         for (let i = 0; i < arrLen; i++) {
           const ch = arr[i];
           if (!ch || typeof ch !== 'object') continue;
-
-          // Skip non_playable channels
-          if (ch.display && ch.display.markers &&
-              ch.display.markers.special &&
-              ch.display.markers.special.value === 'non_playable') continue;
 
           const name = String(
             ch.display && ch.display.title ? ch.display.title : (ch.id != null ? ch.id : '')
@@ -343,9 +333,20 @@ test.describe('Guide', () => {
             continue;
           }
 
+          // Diagnostic: log what buttons are on the page (helps identify Watch button text)
+          const pageButtons = await page.evaluate(() =>
+            Array.from(document.querySelectorAll('button'))
+              .map(b => (b as HTMLButtonElement).innerText?.trim().slice(0, 40))
+              .filter(Boolean)
+              .slice(0, 10)
+          ).catch(() => [] as string[]);
+          if (pageButtons.length > 0) {
+            console.log(`  -> buttons on page: ${JSON.stringify(pageButtons)}`);
+          }
+
           // Some channels land on a folio/detail page before starting playback.
-          // Look for any Watch / Watch Now / Watch Live / Play button and click it.
-          const watchBtn = page.locator('button').filter({ hasText: /watch|play/i }).first();
+          // Look for any Watch / Watch Now / Watch Live / Play / Tune In button and click it.
+          const watchBtn = page.locator('button').filter({ hasText: /watch|play|tune/i }).first();
           if (await watchBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
             await watchBtn.click().catch(() => {});
             console.log(`  -> clicked Watch button`);
