@@ -330,8 +330,9 @@ test.describe('Guide', () => {
             'a:has-text("Watch")',
           ].join(', ')).first();
 
+          // Give Angular more time to bootstrap after 'commit' navigation (20 s)
           console.log(`  → checking folio…`);
-          const folioAppeared = await folioBtn.waitFor({ state: 'visible', timeout: 12_000 })
+          const folioAppeared = await folioBtn.waitFor({ state: 'visible', timeout: 20_000 })
             .then(() => true).catch(() => false);
 
           if (folioAppeared) {
@@ -340,12 +341,18 @@ test.describe('Guide', () => {
             console.log(`  -> post-click URL: ${page.url()}`);
           }
 
-          // Wait for video element to start playing
-          console.log(`  -> waiting for video…`);
-          const videoStarted = await page.waitForFunction(() => {
-            const v = document.querySelector('video') as HTMLVideoElement | null;
-            return v !== null && v.readyState >= 2 && (v.currentTime > 0 || !v.paused);
-          }, { timeout: 30_000 }).catch(() => null);
+          // Poll for video start — manual loop avoids waitForFunction timeout
+          // issues caused by test.setTimeout(7_200_000) overriding page defaults.
+          console.log(`  -> polling for video…`);
+          let videoStarted = false;
+          for (let poll = 0; poll < 30 && !videoStarted; poll++) {
+            videoStarted = await page.evaluate(() => {
+              const v = document.querySelector('video') as HTMLVideoElement | null;
+              return !!(v && v.readyState >= 2 && (v.currentTime > 0 || !v.paused));
+            }).catch(() => false);
+            if (!videoStarted) await page.waitForTimeout(1_000);
+          }
+          console.log(`  -> video poll done: started=${videoStarted}`);
 
           if (!videoStarted) {
             result.skipReason = 'Video did not start within 30 s';
