@@ -353,41 +353,55 @@ test.describe('Guide', () => {
 
           console.log(`  -> clicked — url: ${page.url()}`);
 
-          // The program tile click opens a program-info popup (template_overlay).
-          // We need a second click on the Watch button inside that popup to open
-          // the player. Dump popup HTML for the first 3 channels so we know
-          // the button class, then click it.
+          // The program tile click opens a program-info popup via Angular CDK portal.
+          // The ng-template placeholder (template_overlay) has empty innerHTML —
+          // the actual popup content is rendered into .cdk-overlay-pane by the CDK.
+          // Search that pane (and fallbacks) for the Watch button and click it.
           const popupWatchCoords = await page.evaluate(() => {
-            const overlay = document.querySelector('[class*="template_overlay"]') as HTMLElement | null;
-            if (!overlay) return null;
-            // Prefer watch/play-named elements; fall back to any button
-            const btn = (
-              overlay.querySelector('[class*="watch"]')  ??
-              overlay.querySelector('[class*="Watch"]')  ??
-              overlay.querySelector('[class*="play"]')   ??
-              overlay.querySelector('[class*="Play"]')   ??
-              overlay.querySelector('button')            ??
-              overlay.querySelector('a[href]')
-            ) as HTMLElement | null;
-            const rect = overlay.getBoundingClientRect();
-            const overlayInfo = {
-              overlayW:  rect.width,
-              overlayH:  rect.height,
-              html:      overlay.innerHTML.slice(0, 600),
-              btnCls:    btn?.className?.toString().slice(0, 50) ?? 'none',
-              btnTag:    btn?.tagName ?? 'none',
-              btnTxt:    btn ? (btn as HTMLButtonElement).innerText?.trim().slice(0, 40) : 'none',
+            // Search order: CDK pane → CDK container → template_overlay parent → body
+            const containers: (HTMLElement | null)[] = [
+              document.querySelector('.cdk-overlay-pane'),
+              document.querySelector('.cdk-overlay-container'),
+              document.querySelector('[class*="template_overlay"]')?.parentElement ?? null,
+            ];
+
+            let foundBtn: HTMLElement | null = null;
+            let foundContainerCls = 'none';
+            for (const c of containers) {
+              if (!c) continue;
+              const btn = (
+                c.querySelector('[class*="watch"]')  ??
+                c.querySelector('[class*="Watch"]')  ??
+                c.querySelector('[class*="play"]')   ??
+                c.querySelector('[class*="Play"]')   ??
+                c.querySelector('button')            ??
+                c.querySelector('a[href]')
+              ) as HTMLElement | null;
+              if (btn) { foundBtn = btn; foundContainerCls = c.className?.toString().slice(0, 50) ?? ''; break; }
+            }
+
+            // Always dump CDK pane/container HTML for the first few channels
+            const cdkPane = document.querySelector('.cdk-overlay-pane') as HTMLElement | null;
+            const cdkCont = document.querySelector('.cdk-overlay-container') as HTMLElement | null;
+            const info = {
+              cdkPaneHtml:      cdkPane?.innerHTML.slice(0, 600) ?? 'no .cdk-overlay-pane',
+              cdkContainerHtml: cdkCont?.innerHTML.slice(0, 200) ?? 'no .cdk-overlay-container',
+              containerCls:     foundContainerCls,
+              btnTag:  foundBtn?.tagName ?? 'none',
+              btnCls:  foundBtn?.className?.toString().slice(0, 50) ?? 'none',
+              btnTxt:  foundBtn ? (foundBtn as HTMLButtonElement).innerText?.trim().slice(0, 40) : 'none',
             };
-            if (!btn) return { coords: null, info: overlayInfo };
-            const br = btn.getBoundingClientRect();
+
+            if (!foundBtn) return { coords: null, info };
+            const br = foundBtn.getBoundingClientRect();
             return {
               coords: { x: br.left + br.width / 2, y: br.top + br.height / 2 },
-              info:   overlayInfo,
+              info,
             };
           });
 
-          if (i < 3 && popupWatchCoords) {
-            console.log(`  -> popup html: ${popupWatchCoords.info.html}`);
+          if (i < 3) {
+            console.log(`  -> cdkPane html: ${popupWatchCoords?.info.cdkPaneHtml}`);
           }
 
           if (popupWatchCoords?.coords) {
@@ -395,8 +409,8 @@ test.describe('Guide', () => {
             console.log(`  -> watch btn <${popupWatchCoords.info.btnTag}> "${popupWatchCoords.info.btnCls}" "${popupWatchCoords.info.btnTxt}" @ (${wc.x.toFixed(0)},${wc.y.toFixed(0)})`);
             await page.mouse.click(wc.x, wc.y);
             await page.waitForTimeout(500);
-          } else if (popupWatchCoords) {
-            console.log(`  -> popup appeared but no watch btn found`);
+          } else {
+            console.log(`  -> no watch btn (cdkPane: ${popupWatchCoords?.info.cdkPaneHtml?.slice(0, 80) ?? 'null'})`);
           }
 
           // Diagnostic dump for first 5 channels (understand page structure)
