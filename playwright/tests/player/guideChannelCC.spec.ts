@@ -252,9 +252,15 @@ test.describe('Guide', () => {
             await page.waitForTimeout(2_000);
           }
 
-          // Find the channel image in #list_of_channels, scroll it into view,
-          // and return its viewport coordinates.
-          // page.evaluate handles special chars in title (A&E, Crime+Investigation, etc.)
+          // Scroll the channel img into view to get its Y coordinate (the row),
+          // then compute the click X inside rt_block's program grid (the 3rd child).
+          //
+          // WHY: rt_block is the program guide grid that physically overlaps the
+          // channel-logo column. The Angular (click) binding lives on the program
+          // tiles inside rt_block — NOT on the channel <img>. When we disabled
+          // rt_block's pointer-events the click fell through to the logo <img>,
+          // which has no binding. Fix: keep rt_block clickable and target the
+          // program grid (child[2] of rt_block) at the channel's Y row.
           const coords = await page.evaluate((name: string) => {
             const imgs = Array.from(
               document.querySelectorAll('#list_of_channels .channel img')
@@ -262,14 +268,42 @@ test.describe('Guide', () => {
             const img = imgs.find(el => el.getAttribute('title') === name);
             if (!img) return null;
             img.scrollIntoView({ block: 'center', behavior: 'instant' });
-            const rect = img.getBoundingClientRect();
-            const x = rect.left + rect.width / 2;
-            const y = rect.top + rect.height / 2;
-            const elAtPoint = document.elementFromPoint(x, y);
+            const imgRect = img.getBoundingClientRect();
+            const imgCenterY = imgRect.top + imgRect.height / 2;
+            const imgCenterX = imgRect.left + imgRect.width / 2;
+
+            // Compute click X inside the program grid (rt_block child[2]).
+            // child[0] = overlay_shadow, child[1] = rt_controls (nav arrows),
+            // child[2] = the actual program tile grid.
+            const rtBlock = document.querySelector('.rt_block') as HTMLElement | null;
+            let clickX = imgCenterX;
+            let strategy = 'img-center-fallback';
+            let pgLeft = 0, pgWidth = 0;
+
+            if (rtBlock && rtBlock.children.length >= 3) {
+              const pg = rtBlock.children[2] as HTMLElement;
+              const pgRect = pg.getBoundingClientRect();
+              pgLeft  = pgRect.left;
+              pgWidth = pgRect.width;
+              // Click 20% from the left of the program grid (leftmost / current
+              // time-slot programs are on the left side before any scrolling).
+              clickX = pgRect.left + pgRect.width * 0.2;
+              strategy = 'program-grid-child2';
+            } else if (rtBlock) {
+              const rtRect = rtBlock.getBoundingClientRect();
+              clickX = rtRect.left + rtRect.width * 0.3;
+              strategy = 'rt_block-30pct';
+            }
+
+            const elAtImgPoint   = document.elementFromPoint(imgCenterX, imgCenterY);
+            const elAtClickPoint = document.elementFromPoint(clickX,      imgCenterY);
             return {
-              x, y,
-              elTag:   elAtPoint?.tagName ?? 'none',
-              elClass: (elAtPoint?.className ?? '').toString().slice(0, 80),
+              x: clickX, y: imgCenterY,
+              imgX: imgCenterX,
+              strategy,
+              pgLeft, pgWidth,
+              elAtImg:   `<${elAtImgPoint?.tagName}>  "${(elAtImgPoint?.className  ?? '').toString().slice(0, 50)}"`,
+              elAtClick: `<${elAtClickPoint?.tagName}> "${(elAtClickPoint?.className ?? '').toString().slice(0, 50)}"`,
             };
           }, ch.name);
 
@@ -281,35 +315,17 @@ test.describe('Guide', () => {
           }
 
           if (i < 5) {
-            console.log(`  -> elementFromPoint (raw): <${coords.elTag}> "${coords.elClass}"`);
-          }
-
-          // For the first channel, log the DOM parent chain with computed pointer-events
-          // so we know the exact element hierarchy and which nodes intercept clicks.
-          if (i === 0) {
-            const domChain = await page.evaluate((name: string) => {
-              const img = Array.from(document.querySelectorAll('#list_of_channels img'))
-                .find(el => el.getAttribute('title') === name);
-              if (!img) return 'img not found';
-              const parts: string[] = [];
-              let el: Element | null = img;
-              for (let j = 0; j < 10 && el; j++) {
-                const pe = window.getComputedStyle(el).pointerEvents;
-                parts.push(`${el.tagName}.${(el.className?.toString() ?? '').slice(0, 25)}[pe=${pe}]`);
-                el = el.parentElement;
-              }
-              return parts.join(' ← ');
-            }, ch.name);
-            console.log(`  -> DOM chain: ${domChain}`);
+            console.log(`  -> strategy: ${coords.strategy}  pgLeft=${coords.pgLeft} pgW=${coords.pgWidth}`);
+            console.log(`  -> elAtImg:   ${coords.elAtImg}`);
+            console.log(`  -> elAtClick: ${coords.elAtClick}`);
           }
 
           // Small pause to let scrollIntoView settle before clicking
           await page.waitForTimeout(300);
 
-          // Inject a <style> tag to disable pointer-events on known overlay elements.
-          // A <style> tag is used instead of inline styles: Angular's change detection
-          // resets inline styles between evaluate() calls but cannot remove an
-          // externally-injected <style> tag. !important overrides any competing CSS.
+          // Disable ONLY overlay_shadow (the dimming div inside rt_block).
+          // We must NOT disable rt_block itself — the program tiles inside it
+          // carry the Angular (click) bindings that open the player overlay.
           await page.evaluate(() => {
             let s = document.getElementById('__pw_pe_override__') as HTMLStyleElement | null;
             if (!s) {
@@ -318,27 +334,14 @@ test.describe('Guide', () => {
               document.head.appendChild(s);
             }
             s.textContent = `
-              [class*="overlay_shadow"],[id*="overlay_shadow"],
-              [class*="rt_block"],[id*="rt_block"] {
+              [class*="overlay_shadow"],[id*="overlay_shadow"] {
                 pointer-events: none !important;
               }
             `;
           });
 
-          // Verify: what element is at the click point AFTER the override is injected?
-          // If still rt_block, the CSS is not working. If different, the click should land there.
-          const hitAfterDisable = await page.evaluate((cx) => {
-            const el = document.elementFromPoint(cx.x, cx.y);
-            return `<${el?.tagName ?? '?'}> "${(el?.className ?? '').toString().slice(0, 60)}"`;
-          }, coords);
-          if (i < 5) {
-            console.log(`  -> elementFromPoint (overlay off): ${hitAfterDisable}`);
-          }
-
           // page.mouse.click() generates a real mouse event with isTrusted=true.
-          // Angular's (click) binding fires → router opens player overlay on /guide.
-          // JS element.click() / page.evaluate click() produces isTrusted=false
-          // which Angular's router ignores — that's why the previous approach failed.
+          // Angular's (click) binding fires → opens the player overlay on /guide.
           await page.mouse.click(coords.x, coords.y);
 
           // Remove the style override
