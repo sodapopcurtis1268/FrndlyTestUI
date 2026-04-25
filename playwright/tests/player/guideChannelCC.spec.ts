@@ -349,9 +349,55 @@ test.describe('Guide', () => {
             document.getElementById('__pw_pe_override__')?.remove();
           });
 
-          await page.waitForTimeout(500);
+          await page.waitForTimeout(800);
 
           console.log(`  -> clicked — url: ${page.url()}`);
+
+          // The program tile click opens a program-info popup (template_overlay).
+          // We need a second click on the Watch button inside that popup to open
+          // the player. Dump popup HTML for the first 3 channels so we know
+          // the button class, then click it.
+          const popupWatchCoords = await page.evaluate(() => {
+            const overlay = document.querySelector('[class*="template_overlay"]') as HTMLElement | null;
+            if (!overlay) return null;
+            // Prefer watch/play-named elements; fall back to any button
+            const btn = (
+              overlay.querySelector('[class*="watch"]')  ??
+              overlay.querySelector('[class*="Watch"]')  ??
+              overlay.querySelector('[class*="play"]')   ??
+              overlay.querySelector('[class*="Play"]')   ??
+              overlay.querySelector('button')            ??
+              overlay.querySelector('a[href]')
+            ) as HTMLElement | null;
+            const rect = overlay.getBoundingClientRect();
+            const overlayInfo = {
+              overlayW:  rect.width,
+              overlayH:  rect.height,
+              html:      overlay.innerHTML.slice(0, 600),
+              btnCls:    btn?.className?.toString().slice(0, 50) ?? 'none',
+              btnTag:    btn?.tagName ?? 'none',
+              btnTxt:    btn ? (btn as HTMLButtonElement).innerText?.trim().slice(0, 40) : 'none',
+            };
+            if (!btn) return { coords: null, info: overlayInfo };
+            const br = btn.getBoundingClientRect();
+            return {
+              coords: { x: br.left + br.width / 2, y: br.top + br.height / 2 },
+              info:   overlayInfo,
+            };
+          });
+
+          if (i < 3 && popupWatchCoords) {
+            console.log(`  -> popup html: ${popupWatchCoords.info.html}`);
+          }
+
+          if (popupWatchCoords?.coords) {
+            const wc = popupWatchCoords.coords;
+            console.log(`  -> watch btn <${popupWatchCoords.info.btnTag}> "${popupWatchCoords.info.btnCls}" "${popupWatchCoords.info.btnTxt}" @ (${wc.x.toFixed(0)},${wc.y.toFixed(0)})`);
+            await page.mouse.click(wc.x, wc.y);
+            await page.waitForTimeout(500);
+          } else if (popupWatchCoords) {
+            console.log(`  -> popup appeared but no watch btn found`);
+          }
 
           // Diagnostic dump for first 5 channels (understand page structure)
           if (i < 5) {
