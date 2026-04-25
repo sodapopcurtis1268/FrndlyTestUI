@@ -376,24 +376,47 @@ test.describe('Guide', () => {
           // container_overlay holds the actual card: image + title + Watch button.
           const watchBtnCoords = await page.evaluate((diagIdx: number) => {
             const card = document.querySelector('[class*="container_overlay"]') as HTMLElement | null;
-            const html = card ? card.innerHTML.slice(0, 800) : 'no container_overlay';
+            const html = card ? card.innerHTML.slice(0, 2500) : 'no container_overlay';
 
-            if (!card) return { coords: null, html, btnInfo: null };
+            if (!card) return { coords: null, html, btnInfo: null, clickables: [] as object[] };
 
-            // Prefer watch/play-named children; fall back to any visible button/link
+            // Log every element inside the card that has cursor:pointer —
+            // the Watch CTA is a <div>/<a> with a click handler, not a <button>.
+            const clickables = Array.from(card.querySelectorAll('*'))
+              .filter(el => {
+                const r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0 &&
+                       window.getComputedStyle(el).cursor === 'pointer';
+              })
+              .map(el => ({
+                tag: el.tagName,
+                cls: (el.className ?? '').toString().slice(0, 60),
+                txt: (el as HTMLElement).innerText?.trim().slice(0, 40),
+              }));
+
+            // Prefer watch/play/btn-named; then any pointer-cursor element
             const btn = (
               card.querySelector('[class*="watch"]')  ??
               card.querySelector('[class*="Watch"]')  ??
               card.querySelector('[class*="play"]')   ??
               card.querySelector('[class*="Play"]')   ??
+              card.querySelector('[class*="btn"]')    ??
+              card.querySelector('[class*="cta"]')    ??
               card.querySelector('button')            ??
-              card.querySelector('a[href]')
+              card.querySelector('a')                 ??
+              card.querySelector('[role="button"]')   ??
+              // Last resort: first element with cursor:pointer
+              (Array.from(card.querySelectorAll('*')).find(el => {
+                const r = el.getBoundingClientRect();
+                return r.width > 0 && r.height > 0 &&
+                       window.getComputedStyle(el).cursor === 'pointer';
+              }) ?? null)
             ) as HTMLElement | null;
 
-            if (!btn) return { coords: null, html, btnInfo: null };
+            if (!btn) return { coords: null, html, btnInfo: null, clickables };
 
             const br = btn.getBoundingClientRect();
-            if (br.width === 0 || br.height === 0) return { coords: null, html, btnInfo: { invisible: true } };
+            if (br.width === 0 || br.height === 0) return { coords: null, html, btnInfo: { invisible: true, cls: btn.className }, clickables };
             return {
               coords: { x: br.left + br.width / 2, y: br.top + br.height / 2 },
               html,
@@ -402,11 +425,13 @@ test.describe('Guide', () => {
                 cls: btn.className?.toString().slice(0, 60),
                 txt: (btn as HTMLButtonElement).innerText?.trim().slice(0, 40),
               },
+              clickables,
             };
           }, i);
 
           if (i < 3) {
             console.log(`  -> container_overlay html: ${watchBtnCoords.html}`);
+            console.log(`  -> clickables: ${JSON.stringify(watchBtnCoords.clickables)}`);
           }
 
           if (watchBtnCoords.coords) {
