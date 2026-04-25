@@ -88,17 +88,48 @@ test.describe('Guide', () => {
 
       // Scroll the guide so Angular's intersection observer hydrates
       // #list_of_channels and all .channel divs with their img elements.
+      // Walk up from #list_of_channels to find its actual scrollable ancestor
+      // (the static selector list above was missing the real guide container).
       await page.evaluate(async () => {
-        const col = document.querySelector(
-          '.tvguide, .guide_container, .guide-container, #guide, [class*="guide_wrap"], [class*="channel_list"]'
-        ) as HTMLElement | null;
-        const target = col ?? document.documentElement;
-        const total = target.scrollHeight ?? document.body.scrollHeight;
-        for (let pos = 0; pos <= total; pos += 300) {
-          target.scrollTop = pos;
-          await new Promise(r => setTimeout(r, 80));
+        const scrolled = new Set<Element>();
+
+        const doScroll = async (target: HTMLElement) => {
+          if (scrolled.has(target)) return;
+          scrolled.add(target);
+          const total = target.scrollHeight;
+          for (let pos = 0; pos <= total; pos += 200) {
+            target.scrollTop = pos;
+            await new Promise(r => setTimeout(r, 60));
+          }
+          target.scrollTop = 0;
+          await new Promise(r => setTimeout(r, 100));
+        };
+
+        // Walk up from #list_of_channels to find scrollable ancestors
+        const list = document.querySelector('#list_of_channels') as HTMLElement | null;
+        if (list) {
+          let el: HTMLElement | null = list.parentElement;
+          while (el && el !== document.documentElement) {
+            const cs = window.getComputedStyle(el);
+            const oy = cs.overflowY;
+            if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 5) {
+              await doScroll(el);
+            }
+            el = el.parentElement;
+          }
         }
-        target.scrollTop = 0;
+
+        // Also try common guide container selectors
+        for (const sel of [
+          '.tvguide', '.guide_container', '.guide-container', '#guide',
+          '[class*="guide_wrap"]', '[class*="guide_left"]', '[class*="channels_col"]',
+        ]) {
+          const el = document.querySelector(sel) as HTMLElement | null;
+          if (el) await doScroll(el);
+        }
+
+        // Always scroll documentElement as final pass
+        await doScroll(document.documentElement);
       });
 
       // Wait for #list_of_channels channel images to appear
@@ -276,50 +307,88 @@ test.describe('Guide', () => {
           // rt_block's pointer-events the click fell through to the logo <img>,
           // which has no binding. Fix: keep rt_block clickable and target the
           // program grid (child[2] of rt_block) at the channel's Y row.
-          const coords = await page.evaluate((name: string) => {
-            const imgs = Array.from(
+          const coords = await page.evaluate(async (name: string) => {
+            // Shared helper: given a found img, compute the click coords.
+            const computeCoords = (img: HTMLElement) => {
+              img.scrollIntoView({ block: 'center', behavior: 'instant' });
+              const imgRect = img.getBoundingClientRect();
+              const imgCenterY = imgRect.top + imgRect.height / 2;
+              const imgCenterX = imgRect.left + imgRect.width / 2;
+
+              // Compute click X inside the program grid (rt_block child[2]).
+              // child[0] = overlay_shadow, child[1] = rt_controls (nav arrows),
+              // child[2] = the actual program tile grid.
+              const rtBlock = document.querySelector('.rt_block') as HTMLElement | null;
+              let clickX = imgCenterX;
+              let strategy = 'img-center-fallback';
+              let pgLeft = 0, pgWidth = 0;
+
+              if (rtBlock && rtBlock.children.length >= 3) {
+                const pg = rtBlock.children[2] as HTMLElement;
+                const pgRect = pg.getBoundingClientRect();
+                pgLeft  = pgRect.left;
+                pgWidth = pgRect.width;
+                clickX = pgRect.left + pgRect.width * 0.2;
+                strategy = 'program-grid-child2';
+              } else if (rtBlock) {
+                const rtRect = rtBlock.getBoundingClientRect();
+                clickX = rtRect.left + rtRect.width * 0.3;
+                strategy = 'rt_block-30pct';
+              }
+
+              const elAtImgPoint   = document.elementFromPoint(imgCenterX, imgCenterY);
+              const elAtClickPoint = document.elementFromPoint(clickX,      imgCenterY);
+              return {
+                x: clickX, y: imgCenterY,
+                imgX: imgCenterX,
+                strategy,
+                pgLeft, pgWidth,
+                elAtImg:   `<${elAtImgPoint?.tagName}>  "${(elAtImgPoint?.className  ?? '').toString().slice(0, 50)}"`,
+                elAtClick: `<${elAtClickPoint?.tagName}> "${(elAtClickPoint?.className ?? '').toString().slice(0, 50)}"`,
+              };
+            };
+
+            // First try: img already in the DOM without scrolling
+            let imgs = Array.from(
               document.querySelectorAll('#list_of_channels .channel img')
             ) as HTMLElement[];
-            const img = imgs.find(el => el.getAttribute('title') === name);
-            if (!img) return null;
-            img.scrollIntoView({ block: 'center', behavior: 'instant' });
-            const imgRect = img.getBoundingClientRect();
-            const imgCenterY = imgRect.top + imgRect.height / 2;
-            const imgCenterX = imgRect.left + imgRect.width / 2;
+            let img = imgs.find(el => el.getAttribute('title') === name);
+            if (img) return computeCoords(img);
 
-            // Compute click X inside the program grid (rt_block child[2]).
-            // child[0] = overlay_shadow, child[1] = rt_controls (nav arrows),
-            // child[2] = the actual program tile grid.
-            const rtBlock = document.querySelector('.rt_block') as HTMLElement | null;
-            let clickX = imgCenterX;
-            let strategy = 'img-center-fallback';
-            let pgLeft = 0, pgWidth = 0;
+            // Not found — try scrolling the guide's actual scrollable ancestor
+            // to bring this channel's img into the DOM.
+            const list = document.querySelector('#list_of_channels') as HTMLElement | null;
+            const candidates: HTMLElement[] = [];
+            if (list) {
+              let el: HTMLElement | null = list.parentElement;
+              while (el && el !== document.documentElement) {
+                const cs = window.getComputedStyle(el);
+                const oy = cs.overflowY;
+                if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 5) {
+                  candidates.push(el);
+                  break; // nearest scrollable ancestor is enough
+                }
+                el = el.parentElement;
+              }
+            }
+            candidates.push(document.documentElement);
 
-            if (rtBlock && rtBlock.children.length >= 3) {
-              const pg = rtBlock.children[2] as HTMLElement;
-              const pgRect = pg.getBoundingClientRect();
-              pgLeft  = pgRect.left;
-              pgWidth = pgRect.width;
-              // Click 20% from the left of the program grid (leftmost / current
-              // time-slot programs are on the left side before any scrolling).
-              clickX = pgRect.left + pgRect.width * 0.2;
-              strategy = 'program-grid-child2';
-            } else if (rtBlock) {
-              const rtRect = rtBlock.getBoundingClientRect();
-              clickX = rtRect.left + rtRect.width * 0.3;
-              strategy = 'rt_block-30pct';
+            for (const target of candidates) {
+              const total = target.scrollHeight;
+              const step  = 150;
+              for (let pos = 0; pos <= total + step; pos += step) {
+                target.scrollTop = pos;
+                await new Promise(r => setTimeout(r, 70));
+                imgs = Array.from(
+                  document.querySelectorAll('#list_of_channels .channel img')
+                ) as HTMLElement[];
+                img = imgs.find(el => el.getAttribute('title') === name);
+                if (img) return computeCoords(img);
+              }
+              target.scrollTop = 0; // reset before trying next candidate
             }
 
-            const elAtImgPoint   = document.elementFromPoint(imgCenterX, imgCenterY);
-            const elAtClickPoint = document.elementFromPoint(clickX,      imgCenterY);
-            return {
-              x: clickX, y: imgCenterY,
-              imgX: imgCenterX,
-              strategy,
-              pgLeft, pgWidth,
-              elAtImg:   `<${elAtImgPoint?.tagName}>  "${(elAtImgPoint?.className  ?? '').toString().slice(0, 50)}"`,
-              elAtClick: `<${elAtClickPoint?.tagName}> "${(elAtClickPoint?.className ?? '').toString().slice(0, 50)}"`,
-            };
+            return null;
           }, ch.name);
 
           if (!coords) {
@@ -394,24 +463,35 @@ test.describe('Guide', () => {
                 txt: (el as HTMLElement).innerText?.trim().slice(0, 40),
               }));
 
-            // Prefer watch/play/btn-named; then any pointer-cursor element
-            const btn = (
-              card.querySelector('[class*="watch"]')  ??
-              card.querySelector('[class*="Watch"]')  ??
-              card.querySelector('[class*="play"]')   ??
-              card.querySelector('[class*="Play"]')   ??
-              card.querySelector('[class*="btn"]')    ??
-              card.querySelector('[class*="cta"]')    ??
-              card.querySelector('button')            ??
-              card.querySelector('a')                 ??
-              card.querySelector('[role="button"]')   ??
-              // Last resort: first element with cursor:pointer
-              (Array.from(card.querySelectorAll('*')).find(el => {
-                const r = el.getBoundingClientRect();
-                return r.width > 0 && r.height > 0 &&
-                       window.getComputedStyle(el).cursor === 'pointer';
-              }) ?? null)
-            ) as HTMLElement | null;
+            // First: match by visible text to avoid picking "Episodes"/"Record"/"Favorite"
+            // btn_info elements (all share [class*="btn"] so class alone is insufficient).
+            const watchTexts = ['watch live', 'watch', 'resume', 'play'];
+            const allInCard = Array.from(card.querySelectorAll('*')) as HTMLElement[];
+            let btn: HTMLElement | null = allInCard.find(el => {
+              const r = el.getBoundingClientRect();
+              if (r.width === 0 || r.height === 0) return false;
+              const txt = (el as HTMLElement).innerText?.trim().toLowerCase() ?? '';
+              return watchTexts.some(w => txt === w);
+            }) ?? null;
+
+            // Fallback: class-based — exclude generic [class*="btn"] to avoid wrong buttons
+            if (!btn) {
+              btn = (
+                card.querySelector('[class*="watch"]')  ??
+                card.querySelector('[class*="Watch"]')  ??
+                card.querySelector('[class*="play"]')   ??
+                card.querySelector('[class*="Play"]')   ??
+                card.querySelector('[class*="cta"]')    ??
+                card.querySelector('button')            ??
+                card.querySelector('a')                 ??
+                card.querySelector('[role="button"]')   ??
+                allInCard.find(el => {
+                  const r = el.getBoundingClientRect();
+                  return r.width > 0 && r.height > 0 &&
+                         window.getComputedStyle(el).cursor === 'pointer';
+                }) ?? null
+              ) as HTMLElement | null;
+            }
 
             if (!btn) return { coords: null, html, btnInfo: null, clickables };
 
@@ -510,8 +590,8 @@ test.describe('Guide', () => {
           console.log(`  ▶  Playing for ${config.videoPlaySeconds} s…`);
           await page.waitForTimeout(config.videoPlaySeconds * 1_000);
 
-          // Check CC via textTracks
-          const trackInfo = await page.evaluate(() => {
+          // ── CC check 1: native textTracks ────────────────────────────────
+          const nativeTracks = await page.evaluate(() => {
             const v = document.querySelector('video') as HTMLVideoElement | null;
             const tracks = Array.from(v?.textTracks ?? []);
             return {
@@ -520,21 +600,115 @@ test.describe('Guide', () => {
               tracks:    tracks.map(t => ({ kind: t.kind, label: t.label, mode: t.mode })),
             };
           });
+          console.log(`  📋 CC tracks (native): ${JSON.stringify(nativeTracks.tracks)}`);
 
-          result.ccAvailable = trackInfo.available;
-          console.log(`  📋 CC tracks: ${JSON.stringify(trackInfo.tracks)}`);
+          // ── CC check 2: Bitmovin subtitle panel ────────────────────────────
+          // Bitmovin (bmpui) manages CC through its own API and may not expose
+          // tracks via native textTracks until after the panel is opened.
+          // Strategy: hover to reveal player controls → click the "Subtitles"
+          // settings button → inspect the subtitle list for non-"Off" entries.
+          let bitmovinCcAvailable = false;
+          let bitmovinCcActivated = false;
 
-          if (!trackInfo.available) {
-            result.skipReason = 'No caption/subtitle tracks on this channel';
-            console.log(`  ✗  No CC tracks found`);
-          } else if (!trackInfo.active) {
-            // Hover to reveal controls then click CC button
-            const videoBox = await page.locator('video').first().boundingBox();
+          if (!nativeTracks.available) {
+            // Hover over video to reveal Bitmovin controls
+            const videoBox = await page.locator('video').first().boundingBox().catch(() => null);
             if (videoBox) {
               await page.mouse.move(
                 videoBox.x + videoBox.width / 2,
                 videoBox.y + videoBox.height / 2
               );
+              await page.waitForTimeout(600);
+            }
+
+            // Click the Bitmovin Subtitles settings button
+            const subtitleBtnSel =
+              '.bmpui-ui-settingspanelpageopenbutton[aria-label="Subtitles"], ' +
+              'button[aria-label="Subtitles"]';
+            const hasBmpuiBtn = await page.locator(subtitleBtnSel).first()
+              .isVisible({ timeout: 1_500 }).catch(() => false);
+
+            if (hasBmpuiBtn) {
+              await page.locator(subtitleBtnSel).first().click({ timeout: 3_000 });
+              await page.waitForTimeout(600);
+
+              // Collect subtitle list items from the Bitmovin settings panel
+              const subtitleItems = await page.evaluate(() => {
+                return Array.from(document.querySelectorAll(
+                  '.bmpui-ui-subtitlelistbox .bmpui-ui-listitem, ' +
+                  '[class*="subtitlelist"] [class*="listitem"], ' +
+                  '[class*="subtitle-list"] [class*="list-item"]'
+                )).map(el => ({
+                  text: (el as HTMLElement).innerText?.trim() ?? '',
+                  cls:  el.className.toString().slice(0, 80),
+                  selected: el.classList.contains('bmpui-selected') ||
+                            (el as HTMLElement).getAttribute('aria-checked') === 'true',
+                }));
+              });
+
+              console.log(`  📋 Bitmovin subtitle items: ${JSON.stringify(subtitleItems)}`);
+
+              const nonOffItems = subtitleItems.filter(
+                it => it.text && it.text.toLowerCase() !== 'off'
+              );
+              bitmovinCcAvailable = nonOffItems.length > 0;
+
+              if (bitmovinCcAvailable) {
+                // Click the first non-Off subtitle item to activate it
+                const firstNonOff = nonOffItems[0];
+                const activated = await page.evaluate((targetText: string) => {
+                  const items = Array.from(document.querySelectorAll(
+                    '.bmpui-ui-subtitlelistbox .bmpui-ui-listitem, ' +
+                    '[class*="subtitlelist"] [class*="listitem"], ' +
+                    '[class*="subtitle-list"] [class*="list-item"]'
+                  )) as HTMLElement[];
+                  const item = items.find(el =>
+                    (el.innerText?.trim() ?? '').toLowerCase() !== 'off' &&
+                    el.innerText?.trim() === targetText
+                  );
+                  if (item) { item.click(); return true; }
+                  return false;
+                }, firstNonOff.text);
+
+                if (activated) {
+                  await page.waitForTimeout(600);
+                  bitmovinCcActivated = true;
+                  console.log(`  -> Bitmovin CC activated: "${firstNonOff.text}"`);
+                }
+              }
+
+              // Close the subtitle panel (Escape or click elsewhere)
+              await page.keyboard.press('Escape');
+              await page.waitForTimeout(300);
+
+              // Re-check native textTracks — Bitmovin may have populated them now
+              if (bitmovinCcAvailable) {
+                const recheck = await page.evaluate(() => {
+                  const v = document.querySelector('video') as HTMLVideoElement | null;
+                  return Array.from(v?.textTracks ?? [])
+                    .some(t => (t.kind === 'captions' || t.kind === 'subtitles') && t.mode === 'showing');
+                });
+                if (recheck) bitmovinCcActivated = true;
+              }
+            } else {
+              console.log(`  -> Bitmovin Subtitles button not visible (controls may have hidden)`);
+            }
+          }
+
+          const ccAvailable = nativeTracks.available || bitmovinCcAvailable;
+          result.ccAvailable = ccAvailable;
+
+          if (!ccAvailable) {
+            result.skipReason = 'No caption/subtitle tracks on this channel';
+            console.log(`  ✗  No CC tracks found (native + Bitmovin)`);
+          } else if (nativeTracks.active || bitmovinCcActivated) {
+            result.ccActive = true;
+            console.log(`  ✅ CC active`);
+          } else {
+            // Native tracks available but not yet active — try existing CC_BUTTON_SELECTORS
+            const vbFallback = await page.locator('video').first().boundingBox().catch(() => null);
+            if (vbFallback) {
+              await page.mouse.move(vbFallback.x + vbFallback.width / 2, vbFallback.y + vbFallback.height / 2);
               await page.waitForTimeout(500);
             }
 
@@ -557,9 +731,6 @@ test.describe('Guide', () => {
 
             result.ccActive = ccActive;
             console.log(`  ${ccActive ? '✅' : '❌'} CC active: ${ccActive}`);
-          } else {
-            result.ccActive = true;
-            console.log(`  ✅ CC already active`);
           }
 
         } catch (err: any) {
