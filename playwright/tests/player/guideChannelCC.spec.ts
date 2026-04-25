@@ -349,68 +349,93 @@ test.describe('Guide', () => {
             document.getElementById('__pw_pe_override__')?.remove();
           });
 
-          await page.waitForTimeout(800);
+          // Wait for Angular to finish rendering after the program tile click.
+          // The template_overlay appears within ~500 ms but its content (player
+          // or watch button) may take another second or two to hydrate.
+          await page.waitForTimeout(2_500);
 
           console.log(`  -> clicked — url: ${page.url()}`);
 
-          // The program tile click opens a program-info popup via Angular CDK portal.
-          // The ng-template placeholder (template_overlay) has empty innerHTML —
-          // the actual popup content is rendered into .cdk-overlay-pane by the CDK.
-          // Search that pane (and fallbacks) for the Watch button and click it.
-          const popupWatchCoords = await page.evaluate(() => {
-            // Search order: CDK pane → CDK container → template_overlay parent → body
-            const containers: (HTMLElement | null)[] = [
-              document.querySelector('.cdk-overlay-pane'),
-              document.querySelector('.cdk-overlay-container'),
-              document.querySelector('[class*="template_overlay"]')?.parentElement ?? null,
-            ];
+          // Broad post-click scan: look for the overlay's true structure, any
+          // video elements, and anything at the center of the screen.
+          const postClick = await page.evaluate(() => {
+            const allVideos = Array.from(document.querySelectorAll('video')) as HTMLVideoElement[];
 
-            let foundBtn: HTMLElement | null = null;
-            let foundContainerCls = 'none';
-            for (const c of containers) {
-              if (!c) continue;
-              const btn = (
-                c.querySelector('[class*="watch"]')  ??
-                c.querySelector('[class*="Watch"]')  ??
-                c.querySelector('[class*="play"]')   ??
-                c.querySelector('[class*="Play"]')   ??
-                c.querySelector('button')            ??
-                c.querySelector('a[href]')
-              ) as HTMLElement | null;
-              if (btn) { foundBtn = btn; foundContainerCls = c.className?.toString().slice(0, 50) ?? ''; break; }
-            }
+            const to = document.querySelector('[class*="template_overlay"]') as HTMLElement | null;
+            const toInfo = to ? {
+              cls:        to.className,
+              childCount: to.childElementCount,
+              outerHtml:  to.outerHTML.slice(0, 600),
+              rect:       (() => { const r = to.getBoundingClientRect(); return `${r.width.toFixed(0)}x${r.height.toFixed(0)} @${r.left.toFixed(0)},${r.top.toFixed(0)}`; })(),
+            } : null;
 
-            // Always dump CDK pane/container HTML for the first few channels
-            const cdkPane = document.querySelector('.cdk-overlay-pane') as HTMLElement | null;
-            const cdkCont = document.querySelector('.cdk-overlay-container') as HTMLElement | null;
-            const info = {
-              cdkPaneHtml:      cdkPane?.innerHTML.slice(0, 600) ?? 'no .cdk-overlay-pane',
-              cdkContainerHtml: cdkCont?.innerHTML.slice(0, 200) ?? 'no .cdk-overlay-container',
-              containerCls:     foundContainerCls,
-              btnTag:  foundBtn?.tagName ?? 'none',
-              btnCls:  foundBtn?.className?.toString().slice(0, 50) ?? 'none',
-              btnTxt:  foundBtn ? (foundBtn as HTMLButtonElement).innerText?.trim().slice(0, 40) : 'none',
-            };
+            const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+            const centerEl = document.elementFromPoint(cx, cy);
 
-            if (!foundBtn) return { coords: null, info };
-            const br = foundBtn.getBoundingClientRect();
+            // All visible overlay/modal/player-like elements that have children
+            const candidates = Array.from(document.querySelectorAll(
+              '[class*="overlay"],[class*="modal"],[class*="popup"],[class*="player"],[class*="watch_now"],[class*="watch-now"]'
+            )).filter(el => {
+              const r = el.getBoundingClientRect();
+              return r.width > 0 && r.height > 0 && el.childElementCount > 0;
+            }).map(el => ({
+              tag:      el.tagName,
+              cls:      (el.className ?? '').toString().slice(0, 60),
+              children: el.childElementCount,
+              html:     el.innerHTML.slice(0, 300),
+            })).slice(0, 6);
+
             return {
-              coords: { x: br.left + br.width / 2, y: br.top + br.height / 2 },
-              info,
+              videoCount: allVideos.length,
+              templateOverlay: toInfo,
+              centerEl: centerEl ? `<${centerEl.tagName}> "${(centerEl.className ?? '').toString().slice(0, 60)}"` : 'none',
+              candidates,
             };
           });
 
           if (i < 3) {
-            console.log(`  -> cdkPane html: ${popupWatchCoords?.info.cdkPaneHtml}`);
+            console.log(`  -> post-click scan: ${JSON.stringify(postClick, null, 2)}`);
           }
 
-          if (popupWatchCoords?.coords) {
-            const wc = popupWatchCoords.coords;
-            console.log(`  -> watch btn <${popupWatchCoords.info.btnTag}> "${popupWatchCoords.info.btnCls}" "${popupWatchCoords.info.btnTxt}" @ (${wc.x.toFixed(0)},${wc.y.toFixed(0)})`);
-            await page.mouse.click(wc.x, wc.y);
+          // Try to find and click a Watch button in any of the visible candidates
+          const watchBtnCoords = await page.evaluate(() => {
+            const roots = [
+              ...Array.from(document.querySelectorAll('[class*="template_overlay"]')),
+              ...Array.from(document.querySelectorAll('[class*="overlay"],[class*="modal"],[class*="popup"]')),
+              document.body,
+            ] as HTMLElement[];
+
+            for (const root of roots) {
+              const r = root.getBoundingClientRect();
+              if (root !== document.body && (r.width === 0 || r.height === 0)) continue;
+              const btn = (
+                root.querySelector('[class*="watch"]')  ??
+                root.querySelector('[class*="Watch"]')  ??
+                root.querySelector('[class*="play"]')   ??
+                root.querySelector('[class*="Play"]')   ??
+                root.querySelector('button')
+              ) as HTMLElement | null;
+              if (btn) {
+                const br = btn.getBoundingClientRect();
+                if (br.width === 0 || br.height === 0) continue; // invisible
+                return {
+                  x: br.left + br.width / 2, y: br.top + br.height / 2,
+                  tag: btn.tagName,
+                  cls: btn.className?.toString().slice(0, 50),
+                  txt: (btn as HTMLButtonElement).innerText?.trim().slice(0, 40),
+                  rootCls: root.className?.toString().slice(0, 40),
+                };
+              }
+            }
+            return null;
+          });
+
+          if (watchBtnCoords) {
+            console.log(`  -> watch btn <${watchBtnCoords.tag}> "${watchBtnCoords.cls}" "${watchBtnCoords.txt}" in "${watchBtnCoords.rootCls}"`);
+            await page.mouse.click(watchBtnCoords.x, watchBtnCoords.y);
             await page.waitForTimeout(500);
           } else {
-            console.log(`  -> no watch btn (cdkPane: ${popupWatchCoords?.info.cdkPaneHtml?.slice(0, 80) ?? 'null'})`);
+            console.log(`  -> no watch btn found anywhere`);
           }
 
           // Diagnostic dump for first 5 channels (understand page structure)
