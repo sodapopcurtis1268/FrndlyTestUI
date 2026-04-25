@@ -246,6 +246,21 @@ test.describe('Guide', () => {
         console.log(`\n[${i + 1}/${channels.length}] Testing: "${ch.name}"`);
 
         try {
+          // Dismiss any open popup overlay from the previous channel.
+          // template_overlay is a full-screen backdrop (1280×720) that persists
+          // after each channel click and intercepts all subsequent guide clicks.
+          // Clicking it at the top-left corner (outside the popup card) triggers
+          // the backdrop click-outside handler and closes the popup.
+          const hasLeftoverOverlay = await page.evaluate(() => {
+            const to = document.querySelector('[class*="template_overlay"]') as HTMLElement | null;
+            const r = to?.getBoundingClientRect();
+            return !!(to && r && r.width > 100);
+          });
+          if (hasLeftoverOverlay) {
+            await page.mouse.click(10, 10);
+            await page.waitForTimeout(600);
+          }
+
           // Ensure we're on the guide page (player close might have navigated away)
           if (!page.url().includes('/guide')) {
             await page.goto(guideUrl, { waitUntil: 'commit', timeout: 30_000 });
@@ -356,86 +371,51 @@ test.describe('Guide', () => {
 
           console.log(`  -> clicked — url: ${page.url()}`);
 
-          // Broad post-click scan: look for the overlay's true structure, any
-          // video elements, and anything at the center of the screen.
-          const postClick = await page.evaluate(() => {
-            const allVideos = Array.from(document.querySelectorAll('video')) as HTMLVideoElement[];
+          // The program tile click opens a popup card inside .container_overlay.
+          // template_overlay is just the full-screen backdrop (1280×720, 0 children).
+          // container_overlay holds the actual card: image + title + Watch button.
+          const watchBtnCoords = await page.evaluate((diagIdx: number) => {
+            const card = document.querySelector('[class*="container_overlay"]') as HTMLElement | null;
+            const html = card ? card.innerHTML.slice(0, 800) : 'no container_overlay';
 
-            const to = document.querySelector('[class*="template_overlay"]') as HTMLElement | null;
-            const toInfo = to ? {
-              cls:        to.className,
-              childCount: to.childElementCount,
-              outerHtml:  to.outerHTML.slice(0, 600),
-              rect:       (() => { const r = to.getBoundingClientRect(); return `${r.width.toFixed(0)}x${r.height.toFixed(0)} @${r.left.toFixed(0)},${r.top.toFixed(0)}`; })(),
-            } : null;
+            if (!card) return { coords: null, html, btnInfo: null };
 
-            const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-            const centerEl = document.elementFromPoint(cx, cy);
+            // Prefer watch/play-named children; fall back to any visible button/link
+            const btn = (
+              card.querySelector('[class*="watch"]')  ??
+              card.querySelector('[class*="Watch"]')  ??
+              card.querySelector('[class*="play"]')   ??
+              card.querySelector('[class*="Play"]')   ??
+              card.querySelector('button')            ??
+              card.querySelector('a[href]')
+            ) as HTMLElement | null;
 
-            // All visible overlay/modal/player-like elements that have children
-            const candidates = Array.from(document.querySelectorAll(
-              '[class*="overlay"],[class*="modal"],[class*="popup"],[class*="player"],[class*="watch_now"],[class*="watch-now"]'
-            )).filter(el => {
-              const r = el.getBoundingClientRect();
-              return r.width > 0 && r.height > 0 && el.childElementCount > 0;
-            }).map(el => ({
-              tag:      el.tagName,
-              cls:      (el.className ?? '').toString().slice(0, 60),
-              children: el.childElementCount,
-              html:     el.innerHTML.slice(0, 300),
-            })).slice(0, 6);
+            if (!btn) return { coords: null, html, btnInfo: null };
 
+            const br = btn.getBoundingClientRect();
+            if (br.width === 0 || br.height === 0) return { coords: null, html, btnInfo: { invisible: true } };
             return {
-              videoCount: allVideos.length,
-              templateOverlay: toInfo,
-              centerEl: centerEl ? `<${centerEl.tagName}> "${(centerEl.className ?? '').toString().slice(0, 60)}"` : 'none',
-              candidates,
+              coords: { x: br.left + br.width / 2, y: br.top + br.height / 2 },
+              html,
+              btnInfo: {
+                tag: btn.tagName,
+                cls: btn.className?.toString().slice(0, 60),
+                txt: (btn as HTMLButtonElement).innerText?.trim().slice(0, 40),
+              },
             };
-          });
+          }, i);
 
           if (i < 3) {
-            console.log(`  -> post-click scan: ${JSON.stringify(postClick, null, 2)}`);
+            console.log(`  -> container_overlay html: ${watchBtnCoords.html}`);
           }
 
-          // Try to find and click a Watch button in any of the visible candidates
-          const watchBtnCoords = await page.evaluate(() => {
-            const roots = [
-              ...Array.from(document.querySelectorAll('[class*="template_overlay"]')),
-              ...Array.from(document.querySelectorAll('[class*="overlay"],[class*="modal"],[class*="popup"]')),
-              document.body,
-            ] as HTMLElement[];
-
-            for (const root of roots) {
-              const r = root.getBoundingClientRect();
-              if (root !== document.body && (r.width === 0 || r.height === 0)) continue;
-              const btn = (
-                root.querySelector('[class*="watch"]')  ??
-                root.querySelector('[class*="Watch"]')  ??
-                root.querySelector('[class*="play"]')   ??
-                root.querySelector('[class*="Play"]')   ??
-                root.querySelector('button')
-              ) as HTMLElement | null;
-              if (btn) {
-                const br = btn.getBoundingClientRect();
-                if (br.width === 0 || br.height === 0) continue; // invisible
-                return {
-                  x: br.left + br.width / 2, y: br.top + br.height / 2,
-                  tag: btn.tagName,
-                  cls: btn.className?.toString().slice(0, 50),
-                  txt: (btn as HTMLButtonElement).innerText?.trim().slice(0, 40),
-                  rootCls: root.className?.toString().slice(0, 40),
-                };
-              }
-            }
-            return null;
-          });
-
-          if (watchBtnCoords) {
-            console.log(`  -> watch btn <${watchBtnCoords.tag}> "${watchBtnCoords.cls}" "${watchBtnCoords.txt}" in "${watchBtnCoords.rootCls}"`);
-            await page.mouse.click(watchBtnCoords.x, watchBtnCoords.y);
+          if (watchBtnCoords.coords) {
+            const wc = watchBtnCoords.coords;
+            console.log(`  -> watch btn <${watchBtnCoords.btnInfo?.tag}> "${watchBtnCoords.btnInfo?.cls}" "${watchBtnCoords.btnInfo?.txt}"`);
+            await page.mouse.click(wc.x, wc.y);
             await page.waitForTimeout(500);
           } else {
-            console.log(`  -> no watch btn found anywhere`);
+            console.log(`  -> no watch btn in container_overlay (html: ${watchBtnCoords.html.slice(0, 80)})`);
           }
 
           // Diagnostic dump for first 5 channels (understand page structure)
@@ -562,9 +542,20 @@ test.describe('Guide', () => {
           console.log(`  ⚠  ${result.skipReason}`);
         }
 
-        // Close player overlay (Escape) so guide is ready for the next channel
+        // Close any open popup overlay before the next channel.
+        // Escape alone does not close template_overlay — also click the backdrop
+        // corner (10,10) which is outside the popup card and triggers click-outside.
         await page.keyboard.press('Escape');
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(300);
+        const overlayOpen = await page.evaluate(() => {
+          const to = document.querySelector('[class*="template_overlay"]') as HTMLElement | null;
+          const r = to?.getBoundingClientRect();
+          return !!(to && r && r.width > 100);
+        });
+        if (overlayOpen) {
+          await page.mouse.click(10, 10);
+          await page.waitForTimeout(500);
+        }
 
         results.push(result);
       }
