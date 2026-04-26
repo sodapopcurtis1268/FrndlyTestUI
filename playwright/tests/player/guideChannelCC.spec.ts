@@ -59,7 +59,9 @@ test.describe('Guide', () => {
 
     test.setTimeout(7_200_000); // 2 hours
 
-    test('Every guide channel has closed captions', async ({ page }, testInfo) => {
+    const ccMode    = config.guideCC === 'off' ? 'off' : 'on';
+    const chTarget  = config.guideChannel || 'all';
+    test(`Guide CC [mode=${ccMode}] [channels=${chTarget}]`, async ({ page }, testInfo) => {
 
       const guideUrl = config.watchUrl + '/guide';
 
@@ -231,7 +233,20 @@ test.describe('Guide', () => {
         return;
       }
 
-      console.log(`Total channels to test: ${channels.length}`);
+      // ── Channel filtering by GUIDE_CHANNEL env var ────────────────────────
+      const targetNames = config.guideChannel
+        ? config.guideChannel.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+        : [];
+      const channelsToTest = targetNames.length
+        ? channels.filter(ch => targetNames.includes(ch.name.toLowerCase()))
+        : channels;
+
+      if (channelsToTest.length === 0) {
+        test.skip(true, `GUIDE_CHANNEL="${config.guideChannel}" matched no channels in the guide`);
+        return;
+      }
+
+      console.log(`Testing ${channelsToTest.length} channel(s) [GUIDE_CC=${config.guideCC}]`);
 
       // ── One-time diagnostic: dump rt_block structure ─────────────────────
       // This tells us whether rt_block is a subscription gate, a wrapper
@@ -263,9 +278,69 @@ test.describe('Guide', () => {
 
       const results: ChannelResult[] = [];
 
-      // ── Step 3: Test each channel ─────────────────────────────────────────
-      for (let i = 0; i < channels.length; i++) {
-        const ch = channels[i];
+      // ── Step 3: setBitmovinCC helper ──────────────────────────────────────
+      // Hovers video, un-hides bmpui-hidden controls, clicks the Subtitles
+      // settings button, reads the listbox, then clicks the target item.
+      const setBitmovinCC = async (mode: 'on' | 'off') => {
+        const vb = await page.locator('video').first().boundingBox().catch(() => null);
+        if (vb) {
+          const cx = vb.x + vb.width / 2, cy = vb.y + vb.height / 2;
+          await page.mouse.move(cx, cy);       await page.waitForTimeout(300);
+          await page.mouse.move(cx + 5, cy + 5); await page.waitForTimeout(300);
+          await page.mouse.move(cx, cy);       await page.waitForTimeout(400);
+        }
+
+        const found = await page.evaluate(() => {
+          const btn = document.querySelector(
+            '.bmpui-ui-settingspanelpageopenbutton[aria-label="Subtitles"], button[aria-label="Subtitles"]'
+          ) as HTMLElement | null;
+          if (!btn) return false;
+          let el: HTMLElement | null = btn;
+          while (el && el !== document.body) {
+            el.classList.remove('bmpui-hidden');
+            if (el.classList.contains('bmpui-ui-controlbar') ||
+                el.classList.contains('bmpui-ui-uicontainer')) break;
+            el = el.parentElement;
+          }
+          btn.click();
+          return true;
+        });
+        if (!found) return { success: false, item: null as string | null, items: [] as string[] };
+
+        await page.waitForTimeout(700);
+
+        const items: string[] = await page.evaluate(() =>
+          Array.from(document.querySelectorAll(
+            '.bmpui-ui-subtitlelistbox .bmpui-ui-listitem, ' +
+            '[class*="subtitlelist"] [class*="listitem"]'
+          )).map(el => (el as HTMLElement).innerText?.trim() ?? '').filter(t => t.length > 0)
+        );
+
+        console.log(`  📋 Subtitle panel items: ${JSON.stringify(items)}`);
+
+        const target = mode === 'off'
+          ? items.find(t => t.toLowerCase() === 'off')
+          : items.find(t => t.toLowerCase() !== 'off');
+
+        if (!target) return { success: false, item: null as string | null, items };
+
+        const clicked = await page.evaluate((targetText: string) => {
+          const els = Array.from(document.querySelectorAll(
+            '.bmpui-ui-subtitlelistbox .bmpui-ui-listitem, ' +
+            '[class*="subtitlelist"] [class*="listitem"]'
+          )) as HTMLElement[];
+          const el = els.find(e => e.innerText?.trim() === targetText);
+          if (el) { el.click(); return true; }
+          return false;
+        }, target);
+
+        await page.waitForTimeout(500);
+        return { success: clicked, item: target, items };
+      };
+
+      // ── Step 4: Test each channel ─────────────────────────────────────────
+      for (let i = 0; i < channelsToTest.length; i++) {
+        const ch = channelsToTest[i];
         const result: ChannelResult = {
           name:         ch.name,
           index:        i,
@@ -274,7 +349,7 @@ test.describe('Guide', () => {
           ccActive:     false,
         };
 
-        console.log(`\n[${i + 1}/${channels.length}] Testing: "${ch.name}"`);
+        console.log(`\n[${i + 1}/${channelsToTest.length}] Testing: "${ch.name}" [CC=${config.guideCC}]`);
 
         try {
           // Dismiss any open popup overlay from the previous channel.
@@ -590,165 +665,50 @@ test.describe('Guide', () => {
           console.log(`  ▶  Playing for ${config.videoPlaySeconds} s…`);
           await page.waitForTimeout(config.videoPlaySeconds * 1_000);
 
-          // ── CC check 1: native textTracks ────────────────────────────────
-          const nativeTracks = await page.evaluate(() => {
-            const v = document.querySelector('video') as HTMLVideoElement | null;
-            const tracks = Array.from(v?.textTracks ?? []);
+          // ── CC set + verify via Bitmovin panel ───────────────────────────
+          // setBitmovinCC hovers the video, un-hides bmpui-hidden controls,
+          // clicks the Subtitles button, reads the listbox, and clicks the
+          // correct item ('on' → first non-Off track; 'off' → 'Off').
+          const ccSetMode: 'on' | 'off' = config.guideCC === 'off' ? 'off' : 'on';
+          const ccResult = await setBitmovinCC(ccSetMode);
+          console.log(`  -> setBitmovinCC(${ccSetMode}): success=${ccResult.success} item="${ccResult.item}"`);
+
+          // Also snapshot native textTracks for reference
+          const trackState = await page.evaluate(() => {
+            const tracks = Array.from(document.querySelector('video')?.textTracks ?? []);
             return {
-              available: tracks.some(t => t.kind === 'captions' || t.kind === 'subtitles'),
-              active:    tracks.some(t => (t.kind === 'captions' || t.kind === 'subtitles') && t.mode === 'showing'),
-              tracks:    tracks.map(t => ({ kind: t.kind, label: t.label, mode: t.mode })),
+              active: tracks.some(t =>
+                (t.kind === 'captions' || t.kind === 'subtitles') && t.mode === 'showing'
+              ),
+              tracks: tracks.map(t => ({ kind: t.kind, label: t.label, mode: t.mode })),
             };
           });
-          console.log(`  📋 CC tracks (native): ${JSON.stringify(nativeTracks.tracks)}`);
+          console.log(`  📋 Native textTracks: ${JSON.stringify(trackState.tracks)}`);
 
-          // ── CC check 2: Bitmovin subtitle panel ────────────────────────────
-          // Bitmovin (bmpui) manages CC through its own API and may not expose
-          // tracks via native textTracks until after the panel is opened.
-          // Strategy: hover to reveal player controls → click the "Subtitles"
-          // settings button → inspect the subtitle list for non-"Off" entries.
-          let bitmovinCcAvailable = false;
-          let bitmovinCcActivated = false;
+          if (ccSetMode === 'on') {
+            // ccAvailable = panel had at least one non-Off option
+            result.ccAvailable = ccResult.items.some(t => t.toLowerCase() !== 'off');
+            // ccActive = we successfully selected a track, or native already showing
+            result.ccActive    = ccResult.success || trackState.active;
 
-          if (!nativeTracks.available) {
-            // Hover over video to reveal Bitmovin controls (may be auto-hidden after 25s wait)
-            const videoBox = await page.locator('video').first().boundingBox().catch(() => null);
-            if (videoBox) {
-              const cx = videoBox.x + videoBox.width / 2;
-              const cy = videoBox.y + videoBox.height / 2;
-              await page.mouse.move(cx, cy);
-              await page.waitForTimeout(300);
-              await page.mouse.move(cx + 5, cy + 5);
-              await page.waitForTimeout(300);
-              await page.mouse.move(cx, cy);
-              await page.waitForTimeout(500);
-            }
-
-            // Click the Bitmovin Subtitles button via evaluate — bypasses CSS visibility
-            // (bmpui auto-hides controls via bmpui-hidden; DOM click works regardless)
-            const clickedSubtitleBtn = await page.evaluate(() => {
-              const btn = document.querySelector(
-                '.bmpui-ui-settingspanelpageopenbutton[aria-label="Subtitles"], ' +
-                'button[aria-label="Subtitles"]'
-              ) as HTMLElement | null;
-              if (!btn) return false;
-              // Un-hide the controlbar ancestry so the click registers properly
-              let el: HTMLElement | null = btn;
-              while (el && el !== document.body) {
-                el.classList.remove('bmpui-hidden');
-                if (el.classList.contains('bmpui-ui-controlbar') ||
-                    el.classList.contains('bmpui-ui-uicontainer')) break;
-                el = el.parentElement;
-              }
-              btn.click();
-              return true;
-            });
-            console.log(`  -> Bitmovin Subtitles btn click via evaluate: ${clickedSubtitleBtn}`);
-
-            const hasBmpuiBtn = clickedSubtitleBtn;
-
-            if (hasBmpuiBtn) {
-              await page.waitForTimeout(800);
-
-              // Collect subtitle list items from the Bitmovin settings panel
-              const subtitleItems = await page.evaluate(() => {
-                return Array.from(document.querySelectorAll(
-                  '.bmpui-ui-subtitlelistbox .bmpui-ui-listitem, ' +
-                  '[class*="subtitlelist"] [class*="listitem"], ' +
-                  '[class*="subtitle-list"] [class*="list-item"]'
-                )).map(el => ({
-                  text: (el as HTMLElement).innerText?.trim() ?? '',
-                  cls:  el.className.toString().slice(0, 80),
-                  selected: el.classList.contains('bmpui-selected') ||
-                            (el as HTMLElement).getAttribute('aria-checked') === 'true',
-                }));
-              });
-
-              console.log(`  📋 Bitmovin subtitle items: ${JSON.stringify(subtitleItems)}`);
-
-              const nonOffItems = subtitleItems.filter(
-                it => it.text && it.text.toLowerCase() !== 'off'
-              );
-              bitmovinCcAvailable = nonOffItems.length > 0;
-
-              if (bitmovinCcAvailable) {
-                // Click the first non-Off subtitle item to activate it
-                const firstNonOff = nonOffItems[0];
-                const activated = await page.evaluate((targetText: string) => {
-                  const items = Array.from(document.querySelectorAll(
-                    '.bmpui-ui-subtitlelistbox .bmpui-ui-listitem, ' +
-                    '[class*="subtitlelist"] [class*="listitem"], ' +
-                    '[class*="subtitle-list"] [class*="list-item"]'
-                  )) as HTMLElement[];
-                  const item = items.find(el =>
-                    (el.innerText?.trim() ?? '').toLowerCase() !== 'off' &&
-                    el.innerText?.trim() === targetText
-                  );
-                  if (item) { item.click(); return true; }
-                  return false;
-                }, firstNonOff.text);
-
-                if (activated) {
-                  await page.waitForTimeout(600);
-                  bitmovinCcActivated = true;
-                  console.log(`  -> Bitmovin CC activated: "${firstNonOff.text}"`);
-                }
-              }
-
-              // Close the subtitle panel (Escape or click elsewhere)
-              await page.keyboard.press('Escape');
-              await page.waitForTimeout(300);
-
-              // Re-check native textTracks — Bitmovin may have populated them now
-              if (bitmovinCcAvailable) {
-                const recheck = await page.evaluate(() => {
-                  const v = document.querySelector('video') as HTMLVideoElement | null;
-                  return Array.from(v?.textTracks ?? [])
-                    .some(t => (t.kind === 'captions' || t.kind === 'subtitles') && t.mode === 'showing');
-                });
-                if (recheck) bitmovinCcActivated = true;
-              }
+            if (!result.ccAvailable) {
+              result.skipReason = 'Subtitle panel had no non-Off tracks';
+              console.log(`  ✗  No CC tracks found in Bitmovin panel`);
             } else {
-              console.log(`  -> Bitmovin Subtitles button not found in DOM`);
+              console.log(`  ${result.ccActive ? '✅' : '❌'} CC on: active=${result.ccActive}`);
             }
-          }
-
-          const ccAvailable = nativeTracks.available || bitmovinCcAvailable;
-          result.ccAvailable = ccAvailable;
-
-          if (!ccAvailable) {
-            result.skipReason = 'No caption/subtitle tracks on this channel';
-            console.log(`  ✗  No CC tracks found (native + Bitmovin)`);
-          } else if (nativeTracks.active || bitmovinCcActivated) {
-            result.ccActive = true;
-            console.log(`  ✅ CC active`);
           } else {
-            // Native tracks available but not yet active — try existing CC_BUTTON_SELECTORS
-            const vbFallback = await page.locator('video').first().boundingBox().catch(() => null);
-            if (vbFallback) {
-              await page.mouse.move(vbFallback.x + vbFallback.width / 2, vbFallback.y + vbFallback.height / 2);
-              await page.waitForTimeout(500);
+            // off mode: ccAvailable = panel had any items at all
+            result.ccAvailable = ccResult.items.length > 0;
+            // ccActive = "Off" was successfully selected (CC is now disabled)
+            result.ccActive    = ccResult.success;
+
+            if (!result.ccAvailable) {
+              result.skipReason = 'Subtitle panel was empty (no CC tracks to disable)';
+              console.log(`  ⏭  No CC panel items — nothing to disable`);
+            } else {
+              console.log(`  ${result.ccActive ? '✅' : '❌'} CC off: disabled=${result.ccActive}`);
             }
-
-            for (const sel of CC_BUTTON_SELECTORS) {
-              const btn = page.locator(sel).first();
-              const visible = await btn.isVisible({ timeout: 500 }).catch(() => false);
-              if (visible) {
-                await btn.click({ timeout: 5_000 });
-                console.log(`  -> CC button clicked (${sel})`);
-                await page.waitForTimeout(800);
-                break;
-              }
-            }
-
-            const ccActive = await page.evaluate(() => {
-              const v = document.querySelector('video') as HTMLVideoElement | null;
-              return Array.from(v?.textTracks ?? [])
-                .some(t => (t.kind === 'captions' || t.kind === 'subtitles') && t.mode === 'showing');
-            });
-
-            result.ccActive = ccActive;
-            console.log(`  ${ccActive ? '✅' : '❌'} CC active: ${ccActive}`);
           }
 
         } catch (err: any) {
@@ -774,26 +734,36 @@ test.describe('Guide', () => {
         results.push(result);
       }
 
-      // ── Step 4: Report ────────────────────────────────────────────────────
+      // ── Step 5: Report ────────────────────────────────────────────────────
+      const finalCcMode = config.guideCC === 'off' ? 'off' : 'on';
       const passed  = results.filter(r => r.ccActive).length;
       const failed  = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive).length;
       const noCc    = results.filter(r => r.videoStarted && !r.ccAvailable).length;
       const skipped = results.filter(r => !r.videoStarted || r.skipReason).length;
 
+      const modeLabel = finalCcMode === 'on' ? 'CC-ON test' : 'CC-OFF test';
       const reportLines = [
-        `Guide CC Test — ${new Date().toISOString()}`,
-        `Total channels: ${results.length}`,
-        `CC active ✅ : ${passed}`,
-        `CC not active ❌: ${failed}`,
-        `No CC tracks : ${noCc}`,
-        `Skipped      : ${skipped}`,
+        `Guide CC Test [${modeLabel}] — ${new Date().toISOString()}`,
+        `Channels tested : ${results.length}`,
+        finalCcMode === 'on'
+          ? `CC enabled ✅  : ${passed}`
+          : `CC disabled ✅ : ${passed}`,
+        finalCcMode === 'on'
+          ? `CC failed ❌   : ${failed}`
+          : `CC still on ❌ : ${failed}`,
+        `No CC panel    : ${noCc}`,
+        `Skipped        : ${skipped}`,
         '',
         'Channel-by-channel results:',
         ...results.map(r => {
           if (!r.videoStarted) return `  ⏭  [${r.index + 1}] ${r.name} — ${r.skipReason ?? 'video did not start'}`;
-          if (!r.ccAvailable)  return `  📵 [${r.index + 1}] ${r.name} — no CC tracks`;
-          if (r.ccActive)      return `  ✅ [${r.index + 1}] ${r.name} — CC active`;
-          return                      `  ❌ [${r.index + 1}] ${r.name} — CC available but not active`;
+          if (!r.ccAvailable)  return `  📵 [${r.index + 1}] ${r.name} — no CC panel items`;
+          if (r.ccActive)      return finalCcMode === 'on'
+            ? `  ✅ [${r.index + 1}] ${r.name} — CC enabled`
+            : `  ✅ [${r.index + 1}] ${r.name} — CC disabled`;
+          return finalCcMode === 'on'
+            ? `  ❌ [${r.index + 1}] ${r.name} — CC could not be enabled`
+            : `  ❌ [${r.index + 1}] ${r.name} — CC could not be disabled`;
         }),
       ];
 
@@ -818,26 +788,45 @@ test.describe('Guide', () => {
         path: path.join(screenshotDir, `guide-cc-final-${Date.now()}.png`),
       });
 
-      // ── Step 5: Assert ────────────────────────────────────────────────────
-      const ccFailures   = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive);
-      const noCcChannels = results.filter(r => r.videoStarted && !r.ccAvailable);
+      // ── Step 6: Assert ────────────────────────────────────────────────────
+      if (finalCcMode === 'on') {
+        // CC-ON mode: every channel that had a video and a subtitle panel should
+        // have had CC successfully activated.
+        const ccFailures   = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive);
+        const noCcChannels = results.filter(r => r.videoStarted && !r.ccAvailable);
 
-      if (noCcChannels.length > 0) {
-        console.warn(`⚠  ${noCcChannels.length} channel(s) had no CC tracks:\n` +
-          noCcChannels.map(r => `  - ${r.name}`).join('\n'));
+        if (noCcChannels.length > 0) {
+          console.warn(`⚠  ${noCcChannels.length} channel(s) had no CC tracks:\n` +
+            noCcChannels.map(r => `  - ${r.name}`).join('\n'));
+        }
+
+        expect(
+          ccFailures.length,
+          `${ccFailures.length} channel(s) had CC tracks but CC could not be enabled:\n` +
+          ccFailures.map(r => `  - ${r.name}`).join('\n')
+        ).toBe(0);
+
+        expect(
+          noCcChannels.length,
+          `${noCcChannels.length} channel(s) had no CC tracks at all:\n` +
+          noCcChannels.map(r => `  - ${r.name}`).join('\n')
+        ).toBe(0);
+      } else {
+        // CC-OFF mode: every channel that had a video and a subtitle panel should
+        // have had CC successfully disabled.
+        const stillOnChannels = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive);
+
+        if (stillOnChannels.length > 0) {
+          console.warn(`⚠  ${stillOnChannels.length} channel(s) could not be disabled:\n` +
+            stillOnChannels.map(r => `  - ${r.name}`).join('\n'));
+        }
+
+        expect(
+          stillOnChannels.length,
+          `${stillOnChannels.length} channel(s) could not have CC disabled:\n` +
+          stillOnChannels.map(r => `  - ${r.name}`).join('\n')
+        ).toBe(0);
       }
-
-      expect(
-        ccFailures.length,
-        `${ccFailures.length} channel(s) had CC tracks but CC could not be activated:\n` +
-        ccFailures.map(r => `  - ${r.name}`).join('\n')
-      ).toBe(0);
-
-      expect(
-        noCcChannels.length,
-        `${noCcChannels.length} channel(s) had no CC tracks at all:\n` +
-        noCcChannels.map(r => `  - ${r.name}`).join('\n')
-      ).toBe(0);
     });
 
   });
