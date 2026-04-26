@@ -290,11 +290,19 @@ test.describe('Guide', () => {
           await page.mouse.move(cx, cy);       await page.waitForTimeout(400);
         }
 
-        const found = await page.evaluate(() => {
+        const foundInfo = await page.evaluate(() => {
           const btn = document.querySelector(
             '.bmpui-ui-settingspanelpageopenbutton[aria-label="Subtitles"], button[aria-label="Subtitles"]'
           ) as HTMLElement | null;
-          if (!btn) return false;
+          if (!btn) {
+            // Dump all bmpui buttons to help find the right selector
+            const allBtns = Array.from(document.querySelectorAll('[class*="bmpui"] button, button[aria-label]'))
+              .map(b => ({
+                aria: b.getAttribute('aria-label') ?? '',
+                cls: b.className.toString().slice(0, 80),
+              })).slice(0, 15);
+            return { found: false, allBtns };
+          }
           let el: HTMLElement | null = btn;
           while (el && el !== document.body) {
             el.classList.remove('bmpui-hidden');
@@ -303,18 +311,60 @@ test.describe('Guide', () => {
             el = el.parentElement;
           }
           btn.click();
-          return true;
+          return { found: true, allBtns: [] as object[] };
         });
-        if (!found) return { success: false, item: null as string | null, items: [] as string[] };
+        console.log(`  -> Subtitles btn found=${foundInfo.found}${foundInfo.found ? '' : ' allBtns=' + JSON.stringify(foundInfo.allBtns)}`);
+        if (!foundInfo.found) return { success: false, item: null as string | null, items: [] as string[] };
 
-        await page.waitForTimeout(700);
+        await page.waitForTimeout(800);
 
-        const items: string[] = await page.evaluate(() =>
-          Array.from(document.querySelectorAll(
-            '.bmpui-ui-subtitlelistbox .bmpui-ui-listitem, ' +
-            '[class*="subtitlelist"] [class*="listitem"]'
-          )).map(el => (el as HTMLElement).innerText?.trim() ?? '').filter(t => t.length > 0)
-        );
+        // Broad diagnostic: what's visible in the DOM after clicking the button?
+        const panelDiag = await page.evaluate(() => {
+          const visibleBmpui = Array.from(document.querySelectorAll('[class*="bmpui"]'))
+            .filter(el => {
+              const r = el.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            })
+            .map(el => el.className.toString().slice(0, 100))
+            .filter(cls => /setting|subtitle|caption|listbox|listitem|select|panel|overlay/i.test(cls))
+            .slice(0, 20);
+          // Also try any li/button/div inside a visible panel-like element
+          const panelTexts = Array.from(document.querySelectorAll(
+            '[class*="bmpui-ui-settingspanel"] *, [class*="bmpui-ui-listbox"] *, ' +
+            '[class*="settingspanel"] li, [class*="listbox"] li, [class*="listbox"] button'
+          ))
+            .filter(el => el.getBoundingClientRect().width > 0)
+            .map(el => ({
+              cls: el.className.toString().slice(0, 60),
+              txt: (el as HTMLElement).innerText?.trim().slice(0, 30),
+            }))
+            .slice(0, 20);
+          return { visibleBmpui, panelTexts };
+        });
+        console.log(`  -> Panel DOM after click: ${JSON.stringify(panelDiag)}`);
+
+        const items: string[] = await page.evaluate(() => {
+          // Try multiple selector strategies in order
+          const strategies = [
+            '.bmpui-ui-subtitlelistbox .bmpui-ui-listitem',
+            '[class*="subtitlelist"] [class*="listitem"]',
+            '[class*="subtitle"] [class*="listitem"]',
+            '[class*="bmpui-ui-listbox"] [class*="bmpui-ui-listitem"]',
+            '[class*="bmpui-ui-settingspanel"] [class*="bmpui-ui-listitem"]',
+            '[class*="bmpui-ui-settingspanelpage"] button',
+            '[class*="settingspanel"] li',
+            '[class*="listbox"] button',
+          ];
+          for (const sel of strategies) {
+            const els = Array.from(document.querySelectorAll(sel)) as HTMLElement[];
+            const visible = els.filter(el => el.getBoundingClientRect().width > 0);
+            if (visible.length > 0) {
+              console.log('subtitle selector hit: ' + sel);
+              return visible.map(el => el.innerText?.trim() ?? '').filter(t => t.length > 0);
+            }
+          }
+          return [];
+        });
 
         console.log(`  📋 Subtitle panel items: ${JSON.stringify(items)}`);
 
@@ -325,12 +375,23 @@ test.describe('Guide', () => {
         if (!target) return { success: false, item: null as string | null, items };
 
         const clicked = await page.evaluate((targetText: string) => {
-          const els = Array.from(document.querySelectorAll(
-            '.bmpui-ui-subtitlelistbox .bmpui-ui-listitem, ' +
-            '[class*="subtitlelist"] [class*="listitem"]'
-          )) as HTMLElement[];
-          const el = els.find(e => e.innerText?.trim() === targetText);
-          if (el) { el.click(); return true; }
+          const sels = [
+            '.bmpui-ui-subtitlelistbox .bmpui-ui-listitem',
+            '[class*="subtitlelist"] [class*="listitem"]',
+            '[class*="subtitle"] [class*="listitem"]',
+            '[class*="bmpui-ui-listbox"] [class*="bmpui-ui-listitem"]',
+            '[class*="bmpui-ui-settingspanel"] [class*="bmpui-ui-listitem"]',
+            '[class*="bmpui-ui-settingspanelpage"] button',
+            '[class*="settingspanel"] li',
+            '[class*="listbox"] button',
+          ];
+          for (const sel of sels) {
+            const els = Array.from(document.querySelectorAll(sel)) as HTMLElement[];
+            const el = els.find(e =>
+              e.getBoundingClientRect().width > 0 && e.innerText?.trim() === targetText
+            );
+            if (el) { el.click(); return true; }
+          }
           return false;
         }, target);
 
