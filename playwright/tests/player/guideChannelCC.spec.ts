@@ -279,105 +279,214 @@ test.describe('Guide', () => {
       const results: ChannelResult[] = [];
 
       // ── Step 3: setBitmovinCC helper ──────────────────────────────────────
-      // Frndly TV's Bitmovin player renders CC via bmpui-ui-subtitle-overlay
-      // (NOT via native video.textTracks). The "Subtitles" settings button opens
-      // an appearance panel (font/color), not a track selector.
+      // Frndly TV's Bitmovin player renders CC via bmpui-ui-subtitle-overlay.
+      // CC is OFF by default (overlay hidden). The "Subtitles" button opens the
+      // appearance panel (font/color), NOT the track selector. To enable CC we
+      // must go through the main settings gear → subtitle track page.
       //
-      // Detection: overlay visible + not bmpui-hidden = CC active.
-      // Enable/disable: Bitmovin JS API (player.subtitles.enable/disable).
+      // Detection: bmpui-ui-subtitle-overlay without bmpui-hidden class = CC on.
+      // Enable: gear icon → settings panel → click subtitle entry → click track.
+      // Disable: same flow, click "Off".
+      // Bitmovin JS API tried first (faster), gear UI used as fallback.
       const setBitmovinCC = async (mode: 'on' | 'off') => {
-        // Close any settings panel that may still be open
         await page.keyboard.press('Escape');
         await page.waitForTimeout(300);
 
-        // Check current CC state via subtitle overlay DOM
-        const initialState = await page.evaluate(() => {
-          const overlay = document.querySelector('.bmpui-ui-subtitle-overlay') as HTMLElement | null;
-          const label  = document.querySelector('.bmpui-ui-subtitle-label')   as HTMLElement | null;
-          const overlayExists  = !!overlay;
-          const overlayVisible = overlay ? !overlay.classList.contains('bmpui-hidden') &&
-                                           overlay.getBoundingClientRect().width > 0 : false;
-          const hasText        = (label?.innerText?.trim() ?? '').length > 0;
-          return { overlayExists, overlayVisible, hasText };
+        // Read the subtitle overlay's current hidden/visible state
+        const readOverlay = () => page.evaluate(() => {
+          const ov = document.querySelector('.bmpui-ui-subtitle-overlay') as HTMLElement | null;
+          if (!ov) return { exists: false, hidden: true, cls: '' };
+          const hidden = ov.classList.contains('bmpui-hidden') ||
+                         window.getComputedStyle(ov).display === 'none';
+          return { exists: true, hidden, cls: ov.className.toString().slice(0, 80) };
         });
-        console.log(`  -> Subtitle overlay: ${JSON.stringify(initialState)}`);
 
-        if (!initialState.overlayExists) {
-          // No bmpui overlay at all — player didn't load or has no CC support
+        const initial = await readOverlay();
+        console.log(`  -> Subtitle overlay: ${JSON.stringify(initial)}`);
+
+        if (!initial.exists) {
           return { success: false, item: null as string | null,
                    items: [] as string[], ccAvailable: false };
         }
 
-        // CC infrastructure exists
-        const ccCurrentlyActive = initialState.overlayVisible || initialState.hasText;
+        // Return early if already in the desired state
+        const ccOn = !initial.hidden;
+        if (mode === 'on'  && ccOn)  return { success: true, item: 'already-on',  items: [], ccAvailable: true };
+        if (mode === 'off' && !ccOn) return { success: true, item: 'already-off', items: [], ccAvailable: true };
 
-        // If state already matches the desired mode, we're done
-        if (mode === 'on' && ccCurrentlyActive) {
-          return { success: true, item: 'already-active', items: ['active'], ccAvailable: true };
-        }
-        if (mode === 'off' && !ccCurrentlyActive) {
-          return { success: true, item: 'already-off',   items: ['off'],    ccAvailable: true };
-        }
+        // ── Try 1: Bitmovin JS API (scan window scope broadly) ──────────────
+        const apiOk = await page.evaluate((targetMode: string) => {
+          const hasAPI = (o: any): boolean =>
+            !!o && typeof o === 'object' && typeof o?.subtitles?.list === 'function';
 
-        // State doesn't match — try Bitmovin JS API to flip it
-        const apiResult = await page.evaluate((targetMode: string) => {
-          const candidates: any[] = [
-            (window as any).bitmovinplayer,
-            (window as any).bitmovin?.player,
-            (window as any).player,
-            (window as any).Player,
-          ];
-          const uiEl = document.querySelector('.bmpui-ui-uicontainer') as any;
-          if (uiEl) {
-            ['__player', 'player', '_player', 'bitmovinPlayer'].forEach(k => {
-              if (uiEl[k]) candidates.push(uiEl[k]);
-            });
+          let p: any = null;
+
+          // Named candidates
+          for (const k of ['bitmovinplayer', 'player', 'Player', 'bitmovin']) {
+            try { if (hasAPI((window as any)[k])) { p = (window as any)[k]; break; } } catch {}
+          }
+          if (!p) {
+            try { if (hasAPI((window as any).bitmovin?.player)) p = (window as any).bitmovin.player; } catch {}
           }
 
-          for (const p of candidates) {
-            if (!p || typeof p !== 'object') continue;
-            if (typeof p.subtitles?.list !== 'function') continue;
-
-            const tracks: Array<{id: string; label: string}> = p.subtitles.list();
-            const labels = tracks.map(t => t.label ?? t.id);
-
-            if (targetMode === 'off') {
-              if (typeof p.subtitles.disable === 'function') p.subtitles.disable();
-              else if (typeof p.subtitles.disableSubtitles === 'function') p.subtitles.disableSubtitles();
-              return { found: true, action: 'api-disabled', labels };
-            } else {
-              const first = tracks[0];
-              if (first && typeof p.subtitles.enable === 'function') {
-                p.subtitles.enable(first.id);
-                return { found: true, action: 'api-enabled:' + (first.label ?? first.id), labels };
-              }
-              return { found: true, action: 'api-no-tracks', labels };
+          // Scan first 300 window properties for any object with subtitles.list
+          if (!p) {
+            for (const k of Object.getOwnPropertyNames(window).slice(0, 300)) {
+              try {
+                const v = (window as any)[k];
+                if (hasAPI(v)) { p = v; break; }
+                if (v && typeof v === 'object' && !Array.isArray(v)) {
+                  for (const k2 of Object.keys(v).slice(0, 30)) {
+                    try { if (hasAPI(v[k2])) { p = v[k2]; break; } } catch {}
+                  }
+                  if (p) break;
+                }
+              } catch {}
             }
           }
-          return { found: false, action: 'no-api', labels: [] as string[] };
+
+          // Check DOM element properties
+          if (!p) {
+            for (const el of Array.from(document.querySelectorAll('[class*="bmpui-ui-uicontainer"]'))) {
+              for (const k of ['__player', 'player', '_player', 'bitmovinPlayer', '__bitmovin__']) {
+                if (hasAPI((el as any)[k])) { p = (el as any)[k]; break; }
+              }
+              if (p) break;
+            }
+          }
+
+          if (!p) return { found: false, tracks: [] as string[], action: 'no-api' };
+
+          const tracks: Array<{id: string; label: string}> = p.subtitles.list();
+          const labels = tracks.map((t: any) => String(t.label ?? t.id));
+
+          if (targetMode === 'off') {
+            if (typeof p.subtitles.disable === 'function') p.subtitles.disable();
+            return { found: true, tracks: labels, action: 'api-disabled' };
+          } else {
+            const first = tracks[0];
+            if (!first) return { found: true, tracks: labels, action: 'no-tracks' };
+            p.subtitles.enable(first.id);
+            return { found: true, tracks: labels, action: 'api-enabled:' + (first.label ?? first.id) };
+          }
         }, mode);
-        console.log(`  -> Bitmovin API: ${JSON.stringify(apiResult)}`);
+
+        console.log(`  -> Bitmovin API: ${JSON.stringify(apiOk)}`);
+
+        if (apiOk.found) {
+          await page.waitForTimeout(700);
+          const post = await readOverlay();
+          const success = mode === 'on' ? !post.hidden : post.hidden;
+          console.log(`  -> Post-API overlay: ${JSON.stringify(post)}`);
+          return { success, item: success ? mode : null,
+                   items: apiOk.tracks, ccAvailable: true };
+        }
+
+        // ── Try 2: Settings gear UI → subtitle track page ───────────────────
+        // Hover video first so controls are revealed
+        const vb = await page.locator('video').first().boundingBox().catch(() => null);
+        if (vb) {
+          await page.mouse.move(vb.x + vb.width / 2, vb.y + vb.height / 2);
+          await page.waitForTimeout(400);
+        }
+
+        // Click the main settings gear button
+        const gearClicked = await page.evaluate(() => {
+          const sels = [
+            '.bmpui-ui-settingstogglebutton',
+            'button[aria-label="Settings"]',
+            'button[aria-label="Open settings"]',
+            '[class*="settingstoggle"]',
+          ];
+          for (const sel of sels) {
+            const btn = document.querySelector(sel) as HTMLElement | null;
+            if (!btn) continue;
+            let el: HTMLElement | null = btn;
+            while (el && el !== document.body) {
+              el.classList.remove('bmpui-hidden');
+              if (el.classList.contains('bmpui-ui-controlbar') || el.classList.contains('bmpui-ui-uicontainer')) break;
+              el = el.parentElement;
+            }
+            btn.click();
+            return sel;
+          }
+          return null;
+        });
+        console.log(`  -> Gear button: ${gearClicked}`);
+
+        if (!gearClicked) {
+          // Last resort: dump all visible buttons to help debug
+          const allBtns = await page.evaluate(() =>
+            Array.from(document.querySelectorAll('button, [role="button"]'))
+              .filter(el => el.getBoundingClientRect().width > 0)
+              .map(el => ({
+                aria: el.getAttribute('aria-label') ?? '',
+                cls:  el.className.toString().slice(0, 60),
+                txt:  (el as HTMLElement).innerText?.trim().slice(0, 30),
+              })).slice(0, 20)
+          );
+          console.log(`  -> All visible buttons: ${JSON.stringify(allBtns)}`);
+          return { success: false, item: null, items: [], ccAvailable: true };
+        }
 
         await page.waitForTimeout(600);
 
-        // Recheck overlay state
-        const finalState = await page.evaluate(() => {
-          const overlay = document.querySelector('.bmpui-ui-subtitle-overlay') as HTMLElement | null;
-          const label  = document.querySelector('.bmpui-ui-subtitle-label')   as HTMLElement | null;
-          const overlayVisible = overlay ? !overlay.classList.contains('bmpui-hidden') &&
-                                           overlay.getBoundingClientRect().width > 0 : false;
-          const hasText        = (label?.innerText?.trim() ?? '').length > 0;
-          return { overlayVisible, hasText };
-        });
-        const finallyActive = finalState.overlayVisible || finalState.hasText;
-        const success = mode === 'on' ? finallyActive : !finallyActive;
+        // Find and click the "Subtitles" / "CC" entry in the settings panel
+        const panelResult = await page.evaluate(() => {
+          const isSubtitleEntry = (el: Element) => {
+            const txt  = ((el as HTMLElement).innerText?.trim() ?? '').toLowerCase();
+            const aria = (el.getAttribute('aria-label') ?? '').toLowerCase();
+            return /subtitle|caption|\bcc\b/.test(txt) || /subtitle|caption/.test(aria);
+          };
+          const btns = Array.from(document.querySelectorAll(
+            '.bmpui-ui-settings-panel button, .bmpui-ui-settings-panel [role="button"], ' +
+            '[class*="settings-panel"] button'
+          )).filter(el => el.getBoundingClientRect().width > 0);
 
-        return {
-          success,
-          item: success ? (mode === 'on' ? 'enabled' : 'disabled') : null,
-          items: apiResult.labels.length > 0 ? apiResult.labels : ['overlay-based'],
-          ccAvailable: true,
-        };
+          const allEntries = btns.map(el => ({
+            txt:  (el as HTMLElement).innerText?.trim() ?? '',
+            aria: el.getAttribute('aria-label') ?? '',
+          }));
+
+          const target = btns.find(isSubtitleEntry) as HTMLElement | null;
+          if (target) target.click();
+          return { allEntries, clicked: !!target, txt: (target as any)?.innerText?.trim() ?? '' };
+        });
+        console.log(`  -> Settings panel: ${JSON.stringify(panelResult)}`);
+
+        if (!panelResult.clicked) {
+          await page.keyboard.press('Escape');
+          return { success: false, item: null, items: panelResult.allEntries.map(e => e.txt), ccAvailable: true };
+        }
+
+        await page.waitForTimeout(600);
+
+        // Select the correct track in the subtitle track page
+        const trackResult = await page.evaluate((targetMode: string) => {
+          const btns = Array.from(document.querySelectorAll(
+            '.bmpui-ui-settings-panel button, .bmpui-ui-settings-panel [role="option"], ' +
+            '[class*="subtitle"] button, [class*="listbox"] button'
+          )).filter(el => el.getBoundingClientRect().width > 0) as HTMLElement[];
+
+          const tracks = btns.map(el => el.innerText?.trim() ?? '').filter(Boolean);
+          const target = targetMode === 'off'
+            ? btns.find(el => /^off$/i.test(el.innerText?.trim() ?? ''))
+            : btns.find(el => !/^off$/i.test(el.innerText?.trim() ?? '') && el.innerText?.trim());
+
+          if (target) target.click();
+          return { tracks, clicked: !!target, item: target?.innerText?.trim() ?? null };
+        }, mode);
+        console.log(`  -> Track page: ${JSON.stringify(trackResult)}`);
+
+        // Close settings panel
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(500);
+
+        const final = await readOverlay();
+        const success = mode === 'on' ? !final.hidden : final.hidden;
+        console.log(`  -> Final overlay: ${JSON.stringify(final)} success=${success}`);
+
+        return { success, item: trackResult.item, items: trackResult.tracks, ccAvailable: true };
       };
 
       // ── Step 4: Test each channel ─────────────────────────────────────────
