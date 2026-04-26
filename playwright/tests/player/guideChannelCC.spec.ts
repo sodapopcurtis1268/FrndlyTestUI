@@ -455,63 +455,47 @@ test.describe('Guide', () => {
         });
         console.log(`  -> Post-gear DOM: ${JSON.stringify(postGearDom)}`);
 
-        // Find and click the "Subtitles" / "CC" entry in the settings panel
-        const panelResult = await page.evaluate(() => {
-          const isSubtitleEntry = (el: Element) => {
-            const txt  = ((el as HTMLElement).innerText?.trim() ?? '').toLowerCase();
-            const aria = (el.getAttribute('aria-label') ?? '').toLowerCase();
-            return /subtitle|caption|\bcc\b/.test(txt) || /subtitle|caption/.test(aria);
-          };
-          // Broad search across all settings-like containers
-          const btns = Array.from(document.querySelectorAll(
-            'button, [role="button"], [role="option"]'
-          )).filter(el => el.getBoundingClientRect().width > 0);
+        // The Bitmovin settings panel contains a bmpui-ui-subtitleselectbox —
+        // a native <select> element for choosing the subtitle track.
+        // Find it, read its options, and select the target value.
+        const selectResult = await page.evaluate((targetMode: string) => {
+          const wrapper = document.querySelector('.bmpui-ui-subtitleselectbox') as HTMLElement | null;
+          if (!wrapper) return { found: false, options: [] as string[], action: 'no-select', selectedText: '' };
 
-          const allEntries = btns.map(el => ({
-            txt:  (el as HTMLElement).innerText?.trim().slice(0, 40) ?? '',
-            aria: el.getAttribute('aria-label') ?? '',
-            cls:  el.className.toString().slice(0, 60),
-          }));
+          // bmpui wraps a native <select>; the wrapper itself may be the select
+          const selectEl = (wrapper.tagName === 'SELECT'
+            ? wrapper
+            : wrapper.querySelector('select')) as HTMLSelectElement | null;
 
-          const target = btns.find(isSubtitleEntry) as HTMLElement | null;
-          if (target) target.click();
-          return { allEntries, clicked: !!target, txt: (target as any)?.innerText?.trim() ?? '' };
-        });
-        console.log(`  -> Settings panel: clicked=${panelResult.clicked} txt="${panelResult.txt}" entries=${JSON.stringify(panelResult.allEntries.slice(0, 10))}`);
+          if (!selectEl) return { found: true, options: [] as string[], action: 'no-select-el', selectedText: '' };
 
-        if (!panelResult.clicked) {
-          await page.keyboard.press('Escape');
-          return { success: false, item: null, items: panelResult.allEntries.map(e => e.txt), ccAvailable: true };
-        }
+          const options = Array.from(selectEl.options).map(o => o.text.trim());
 
-        await page.waitForTimeout(600);
-
-        // Select the correct track in the subtitle track page
-        const trackResult = await page.evaluate((targetMode: string) => {
-          const btns = Array.from(document.querySelectorAll(
-            '.bmpui-ui-settings-panel button, .bmpui-ui-settings-panel [role="option"], ' +
-            '[class*="subtitle"] button, [class*="listbox"] button'
-          )).filter(el => el.getBoundingClientRect().width > 0) as HTMLElement[];
-
-          const tracks = btns.map(el => el.innerText?.trim() ?? '').filter(Boolean);
           const target = targetMode === 'off'
-            ? btns.find(el => /^off$/i.test(el.innerText?.trim() ?? ''))
-            : btns.find(el => !/^off$/i.test(el.innerText?.trim() ?? '') && el.innerText?.trim());
+            ? Array.from(selectEl.options).find(o => /^off$/i.test(o.text.trim()))
+            : Array.from(selectEl.options).find(o => !/^off$/i.test(o.text.trim()));
 
-          if (target) target.click();
-          return { tracks, clicked: !!target, item: target?.innerText?.trim() ?? null };
+          if (!target) return { found: true, options, action: 'no-target', selectedText: '' };
+
+          selectEl.value = target.value;
+          selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+          // Some Bitmovin builds also listen for 'input'
+          selectEl.dispatchEvent(new Event('input',  { bubbles: true }));
+
+          return { found: true, options, action: 'selected', selectedText: target.text.trim() };
         }, mode);
-        console.log(`  -> Track page: ${JSON.stringify(trackResult)}`);
+        console.log(`  -> Subtitle select: ${JSON.stringify(selectResult)}`);
 
         // Close settings panel
         await page.keyboard.press('Escape');
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(700);
 
         const final = await readOverlay();
         const success = mode === 'on' ? !final.hidden : final.hidden;
         console.log(`  -> Final overlay: ${JSON.stringify(final)} success=${success}`);
 
-        return { success, item: trackResult.item, items: trackResult.tracks, ccAvailable: true };
+        return { success, item: selectResult.selectedText || null,
+                 items: selectResult.options, ccAvailable: true };
       };
 
       // ── Step 4: Test each channel ─────────────────────────────────────────
