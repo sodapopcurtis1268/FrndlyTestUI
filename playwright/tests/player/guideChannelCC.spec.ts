@@ -611,26 +611,44 @@ test.describe('Guide', () => {
           let bitmovinCcActivated = false;
 
           if (!nativeTracks.available) {
-            // Hover over video to reveal Bitmovin controls
+            // Hover over video to reveal Bitmovin controls (may be auto-hidden after 25s wait)
             const videoBox = await page.locator('video').first().boundingBox().catch(() => null);
             if (videoBox) {
-              await page.mouse.move(
-                videoBox.x + videoBox.width / 2,
-                videoBox.y + videoBox.height / 2
-              );
-              await page.waitForTimeout(600);
+              const cx = videoBox.x + videoBox.width / 2;
+              const cy = videoBox.y + videoBox.height / 2;
+              await page.mouse.move(cx, cy);
+              await page.waitForTimeout(300);
+              await page.mouse.move(cx + 5, cy + 5);
+              await page.waitForTimeout(300);
+              await page.mouse.move(cx, cy);
+              await page.waitForTimeout(500);
             }
 
-            // Click the Bitmovin Subtitles settings button
-            const subtitleBtnSel =
-              '.bmpui-ui-settingspanelpageopenbutton[aria-label="Subtitles"], ' +
-              'button[aria-label="Subtitles"]';
-            const hasBmpuiBtn = await page.locator(subtitleBtnSel).first()
-              .isVisible({ timeout: 1_500 }).catch(() => false);
+            // Click the Bitmovin Subtitles button via evaluate — bypasses CSS visibility
+            // (bmpui auto-hides controls via bmpui-hidden; DOM click works regardless)
+            const clickedSubtitleBtn = await page.evaluate(() => {
+              const btn = document.querySelector(
+                '.bmpui-ui-settingspanelpageopenbutton[aria-label="Subtitles"], ' +
+                'button[aria-label="Subtitles"]'
+              ) as HTMLElement | null;
+              if (!btn) return false;
+              // Un-hide the controlbar ancestry so the click registers properly
+              let el: HTMLElement | null = btn;
+              while (el && el !== document.body) {
+                el.classList.remove('bmpui-hidden');
+                if (el.classList.contains('bmpui-ui-controlbar') ||
+                    el.classList.contains('bmpui-ui-uicontainer')) break;
+                el = el.parentElement;
+              }
+              btn.click();
+              return true;
+            });
+            console.log(`  -> Bitmovin Subtitles btn click via evaluate: ${clickedSubtitleBtn}`);
+
+            const hasBmpuiBtn = clickedSubtitleBtn;
 
             if (hasBmpuiBtn) {
-              await page.locator(subtitleBtnSel).first().click({ timeout: 3_000 });
-              await page.waitForTimeout(600);
+              await page.waitForTimeout(800);
 
               // Collect subtitle list items from the Bitmovin settings panel
               const subtitleItems = await page.evaluate(() => {
@@ -691,7 +709,7 @@ test.describe('Guide', () => {
                 if (recheck) bitmovinCcActivated = true;
               }
             } else {
-              console.log(`  -> Bitmovin Subtitles button not visible (controls may have hidden)`);
+              console.log(`  -> Bitmovin Subtitles button not found in DOM`);
             }
           }
 
