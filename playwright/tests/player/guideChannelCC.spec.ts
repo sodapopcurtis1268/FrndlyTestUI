@@ -390,8 +390,8 @@ test.describe('Guide', () => {
           await page.waitForTimeout(400);
         }
 
-        // Click the main settings gear button
-        const gearClicked = await page.evaluate(() => {
+        // Click the main settings gear button via page.mouse.click (isTrusted=true)
+        const gearCoords = await page.evaluate(() => {
           const sels = [
             '.bmpui-ui-settingstogglebutton',
             'button[aria-label="Settings"]',
@@ -401,21 +401,22 @@ test.describe('Guide', () => {
           for (const sel of sels) {
             const btn = document.querySelector(sel) as HTMLElement | null;
             if (!btn) continue;
+            // Un-hide bmpui-hidden ancestors so the element is reachable
             let el: HTMLElement | null = btn;
             while (el && el !== document.body) {
               el.classList.remove('bmpui-hidden');
               if (el.classList.contains('bmpui-ui-controlbar') || el.classList.contains('bmpui-ui-uicontainer')) break;
               el = el.parentElement;
             }
-            btn.click();
-            return sel;
+            const r = btn.getBoundingClientRect();
+            return { sel, x: r.left + r.width / 2, y: r.top + r.height / 2 };
           }
           return null;
         });
-        console.log(`  -> Gear button: ${gearClicked}`);
+        console.log(`  -> Gear button coords: ${JSON.stringify(gearCoords)}`);
 
-        if (!gearClicked) {
-          // Last resort: dump all visible buttons to help debug
+        if (!gearCoords) {
+          // Dump all visible buttons to identify the right selector
           const allBtns = await page.evaluate(() =>
             Array.from(document.querySelectorAll('button, [role="button"]'))
               .filter(el => el.getBoundingClientRect().width > 0)
@@ -429,7 +430,30 @@ test.describe('Guide', () => {
           return { success: false, item: null, items: [], ccAvailable: true };
         }
 
-        await page.waitForTimeout(600);
+        await page.mouse.click(gearCoords.x, gearCoords.y);
+        await page.waitForTimeout(1_000);
+
+        // Dump what appeared in the DOM after clicking the gear (for diagnosis)
+        const postGearDom = await page.evaluate(() => {
+          // All visible bmpui elements matching settings/panel/subtitle
+          const visible = Array.from(document.querySelectorAll('[class*="bmpui"]'))
+            .filter(el => el.getBoundingClientRect().width > 0)
+            .map(el => el.className.toString().slice(0, 100))
+            .filter(cls => /setting|subtitle|caption|panel|listbox|listitem|toggle/i.test(cls))
+            .slice(0, 25);
+          // All visible buttons inside any settings-like container
+          const settingsBtns = Array.from(document.querySelectorAll(
+            '[class*="settings"] button, [class*="Settings"] button, ' +
+            '[class*="panel"] button, [class*="Panel"] button'
+          )).filter(el => el.getBoundingClientRect().width > 0)
+            .map(el => ({
+              cls: el.className.toString().slice(0, 60),
+              txt: (el as HTMLElement).innerText?.trim().slice(0, 40),
+              aria: el.getAttribute('aria-label') ?? '',
+            })).slice(0, 20);
+          return { visible, settingsBtns };
+        });
+        console.log(`  -> Post-gear DOM: ${JSON.stringify(postGearDom)}`);
 
         // Find and click the "Subtitles" / "CC" entry in the settings panel
         const panelResult = await page.evaluate(() => {
@@ -438,21 +462,22 @@ test.describe('Guide', () => {
             const aria = (el.getAttribute('aria-label') ?? '').toLowerCase();
             return /subtitle|caption|\bcc\b/.test(txt) || /subtitle|caption/.test(aria);
           };
+          // Broad search across all settings-like containers
           const btns = Array.from(document.querySelectorAll(
-            '.bmpui-ui-settings-panel button, .bmpui-ui-settings-panel [role="button"], ' +
-            '[class*="settings-panel"] button'
+            'button, [role="button"], [role="option"]'
           )).filter(el => el.getBoundingClientRect().width > 0);
 
           const allEntries = btns.map(el => ({
-            txt:  (el as HTMLElement).innerText?.trim() ?? '',
+            txt:  (el as HTMLElement).innerText?.trim().slice(0, 40) ?? '',
             aria: el.getAttribute('aria-label') ?? '',
+            cls:  el.className.toString().slice(0, 60),
           }));
 
           const target = btns.find(isSubtitleEntry) as HTMLElement | null;
           if (target) target.click();
           return { allEntries, clicked: !!target, txt: (target as any)?.innerText?.trim() ?? '' };
         });
-        console.log(`  -> Settings panel: ${JSON.stringify(panelResult)}`);
+        console.log(`  -> Settings panel: clicked=${panelResult.clicked} txt="${panelResult.txt}" entries=${JSON.stringify(panelResult.allEntries.slice(0, 10))}`);
 
         if (!panelResult.clicked) {
           await page.keyboard.press('Escape');
