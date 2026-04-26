@@ -457,34 +457,58 @@ test.describe('Guide', () => {
 
         // The Bitmovin settings panel contains a bmpui-ui-subtitleselectbox —
         // a native <select> element for choosing the subtitle track.
-        // Find it, read its options, and select the target value.
-        const selectResult = await page.evaluate((targetMode: string) => {
+        // Read-only evaluate: discover options and target text without setting value.
+        // Bitmovin ignores synthetic dispatchEvent() (isTrusted=false); we must use
+        // page.selectOption() from the Playwright layer to fire real browser events.
+        const selectInfo = await page.evaluate((targetMode: string) => {
           const wrapper = document.querySelector('.bmpui-ui-subtitleselectbox') as HTMLElement | null;
-          if (!wrapper) return { found: false, options: [] as string[], action: 'no-select', selectedText: '' };
+          if (!wrapper) return { found: false, options: [] as string[], targetText: '', isSelf: false };
 
-          // bmpui wraps a native <select>; the wrapper itself may be the select
-          const selectEl = (wrapper.tagName === 'SELECT'
-            ? wrapper
-            : wrapper.querySelector('select')) as HTMLSelectElement | null;
-
-          if (!selectEl) return { found: true, options: [] as string[], action: 'no-select-el', selectedText: '' };
+          const isSelf = wrapper.tagName === 'SELECT';
+          const selectEl = (isSelf ? wrapper : wrapper.querySelector('select')) as HTMLSelectElement | null;
+          if (!selectEl) return { found: true, options: [] as string[], targetText: '', isSelf };
 
           const options = Array.from(selectEl.options).map(o => o.text.trim());
-
           const target = targetMode === 'off'
             ? Array.from(selectEl.options).find(o => /^off$/i.test(o.text.trim()))
             : Array.from(selectEl.options).find(o => !/^off$/i.test(o.text.trim()));
 
-          if (!target) return { found: true, options, action: 'no-target', selectedText: '' };
-
-          selectEl.value = target.value;
-          selectEl.dispatchEvent(new Event('change', { bubbles: true }));
-          // Some Bitmovin builds also listen for 'input'
-          selectEl.dispatchEvent(new Event('input',  { bubbles: true }));
-
-          return { found: true, options, action: 'selected', selectedText: target.text.trim() };
+          return { found: true, options, targetText: target?.text.trim() ?? '', isSelf };
         }, mode);
-        console.log(`  -> Subtitle select: ${JSON.stringify(selectResult)}`);
+        console.log(`  -> Subtitle select: ${JSON.stringify(selectInfo)}`);
+
+        let selectedText = '';
+        if (selectInfo.found && selectInfo.targetText) {
+          // page.selectOption() fires real CDP-level browser events (isTrusted=true)
+          // which Bitmovin's event listener responds to. Synthetic dispatchEvent()
+          // inside evaluate() has isTrusted=false and is silently ignored by Bitmovin.
+          const selCSS = selectInfo.isSelf
+            ? '.bmpui-ui-subtitleselectbox'
+            : '.bmpui-ui-subtitleselectbox select';
+          try {
+            await page.selectOption(selCSS, { label: selectInfo.targetText },
+                                    { force: true, timeout: 3_000 });
+            selectedText = selectInfo.targetText;
+            console.log(`  -> page.selectOption("${selectInfo.targetText}") OK`);
+            await page.waitForTimeout(500); // give Bitmovin time to update overlay
+          } catch (err: any) {
+            console.log(`  -> page.selectOption failed: ${err.message?.slice(0, 100)}`);
+            // Fallback: synthetic events (works inconsistently but better than nothing)
+            const fbOk = await page.evaluate((args: { mode: string; text: string }) => {
+              const w = document.querySelector('.bmpui-ui-subtitleselectbox') as HTMLElement | null;
+              if (!w) return false;
+              const s = (w.tagName === 'SELECT' ? w : w.querySelector('select')) as HTMLSelectElement | null;
+              if (!s) return false;
+              const opt = Array.from(s.options).find(o => o.text.trim() === args.text);
+              if (!opt) return false;
+              s.value = opt.value;
+              s.dispatchEvent(new Event('change', { bubbles: true }));
+              s.dispatchEvent(new Event('input',  { bubbles: true }));
+              return true;
+            }, { mode, text: selectInfo.targetText });
+            if (fbOk) selectedText = selectInfo.targetText;
+          }
+        }
 
         // Close settings panel
         await page.keyboard.press('Escape');
@@ -494,8 +518,8 @@ test.describe('Guide', () => {
         const success = mode === 'on' ? !final.hidden : final.hidden;
         console.log(`  -> Final overlay: ${JSON.stringify(final)} success=${success}`);
 
-        return { success, item: selectResult.selectedText || null,
-                 items: selectResult.options, ccAvailable: true };
+        return { success, item: selectedText || null,
+                 items: selectInfo.options, ccAvailable: true };
       };
 
       // ── Step 4: Test each channel ─────────────────────────────────────────
