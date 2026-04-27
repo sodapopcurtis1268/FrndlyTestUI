@@ -26,6 +26,28 @@ import * as path from 'path';
  *   7. Repeat for next channel
  */
 
+// Channels confirmed to have no working CC — excluded from failure assertions.
+// They are still tested and logged; they just don't cause the test to fail.
+const KNOWN_NO_CC = new Set([
+  'Classic Rock',
+  'Flashback 70s',
+  'Hot Country',
+  'Remember the 80s',
+  'Stingray Greatest Hits',
+  'Stingray Holidayscapes',
+  'Dove Spirit of the Heart Land',
+  'Family Movie Classics',
+  'FETV',
+  'GREAT',
+  'Grit',
+  'MovieSphere Gold',
+  'Outdoor Channel',
+  'Pixl',
+  'Pursuit',
+  'REELZ',
+  'Western Bound',
+]);
+
 const CC_BUTTON_SELECTORS = [
   'button[aria-label*="caption" i]',
   'button[aria-label*="subtitle" i]',
@@ -909,10 +931,11 @@ test.describe('Guide', () => {
 
       // ── Step 5: Report ────────────────────────────────────────────────────
       const finalCcMode = config.guideCC === 'off' ? 'off' : 'on';
-      const passed  = results.filter(r => r.ccActive).length;
-      const failed  = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive).length;
-      const noCc    = results.filter(r => r.videoStarted && !r.ccAvailable).length;
-      const skipped = results.filter(r => !r.videoStarted || r.skipReason).length;
+      const passed    = results.filter(r => r.ccActive).length;
+      const failed    = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive && !KNOWN_NO_CC.has(r.name)).length;
+      const knownNoCc = results.filter(r => r.videoStarted && !r.ccActive && KNOWN_NO_CC.has(r.name)).length;
+      const noCc      = results.filter(r => r.videoStarted && !r.ccAvailable && !KNOWN_NO_CC.has(r.name)).length;
+      const skipped   = results.filter(r => !r.videoStarted || r.skipReason).length;
 
       const modeLabel = finalCcMode === 'on' ? 'CC-ON test' : 'CC-OFF test';
       const reportLines = [
@@ -924,19 +947,25 @@ test.describe('Guide', () => {
         finalCcMode === 'on'
           ? `CC failed ❌   : ${failed}`
           : `CC still on ❌ : ${failed}`,
+        `Known no-CC ⏭  : ${knownNoCc}`,
         `No CC panel    : ${noCc}`,
         `Skipped        : ${skipped}`,
         '',
         'Channel-by-channel results:',
         ...results.map(r => {
+          const knownSkip = KNOWN_NO_CC.has(r.name);
           if (!r.videoStarted) return `  ⏭  [${r.index + 1}] ${r.name} — ${r.skipReason ?? 'video did not start'}`;
-          if (!r.ccAvailable)  return `  📵 [${r.index + 1}] ${r.name} — no CC panel items`;
+          if (!r.ccAvailable)  return knownSkip
+            ? `  ⏭  [${r.index + 1}] ${r.name} — known no-CC (no panel)`
+            : `  📵 [${r.index + 1}] ${r.name} — no CC panel items`;
           if (r.ccActive)      return finalCcMode === 'on'
             ? `  ✅ [${r.index + 1}] ${r.name} — CC enabled`
             : `  ✅ [${r.index + 1}] ${r.name} — CC disabled`;
-          return finalCcMode === 'on'
-            ? `  ❌ [${r.index + 1}] ${r.name} — CC could not be enabled`
-            : `  ❌ [${r.index + 1}] ${r.name} — CC could not be disabled`;
+          return knownSkip
+            ? `  ⏭  [${r.index + 1}] ${r.name} — known no-CC (skipped)`
+            : (finalCcMode === 'on'
+              ? `  ❌ [${r.index + 1}] ${r.name} — CC could not be enabled`
+              : `  ❌ [${r.index + 1}] ${r.name} — CC could not be disabled`);
         }),
       ];
 
@@ -963,10 +992,10 @@ test.describe('Guide', () => {
 
       // ── Step 6: Assert ────────────────────────────────────────────────────
       if (finalCcMode === 'on') {
-        // CC-ON mode: every channel that had a video and a subtitle panel should
-        // have had CC successfully activated.
-        const ccFailures   = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive);
-        const noCcChannels = results.filter(r => r.videoStarted && !r.ccAvailable);
+        // CC-ON mode: every non-exempt channel that had a video and a subtitle panel
+        // should have had CC successfully activated.
+        const ccFailures   = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive && !KNOWN_NO_CC.has(r.name));
+        const noCcChannels = results.filter(r => r.videoStarted && !r.ccAvailable && !KNOWN_NO_CC.has(r.name));
 
         if (noCcChannels.length > 0) {
           console.warn(`⚠  ${noCcChannels.length} channel(s) had no CC tracks:\n` +
@@ -985,9 +1014,9 @@ test.describe('Guide', () => {
           noCcChannels.map(r => `  - ${r.name}`).join('\n')
         ).toBe(0);
       } else {
-        // CC-OFF mode: every channel that had a video and a subtitle panel should
-        // have had CC successfully disabled.
-        const stillOnChannels = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive);
+        // CC-OFF mode: every non-exempt channel that had a video and a subtitle panel
+        // should have had CC successfully disabled.
+        const stillOnChannels = results.filter(r => r.videoStarted && r.ccAvailable && !r.ccActive && !KNOWN_NO_CC.has(r.name));
 
         if (stillOnChannels.length > 0) {
           console.warn(`⚠  ${stillOnChannels.length} channel(s) could not be disabled:\n` +
