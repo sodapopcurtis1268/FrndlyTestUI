@@ -431,7 +431,7 @@ test.describe('Guide', () => {
         }
 
         await page.mouse.click(gearCoords.x, gearCoords.y);
-        await page.waitForTimeout(1_000);
+        await page.waitForTimeout(300); // 300ms is enough for panel open animation
 
         // Dump what appeared in the DOM after clicking the gear (for diagnosis)
         const postGearDom = await page.evaluate(() => {
@@ -490,7 +490,7 @@ test.describe('Guide', () => {
                                     { force: true, timeout: 3_000 });
             selectedText = selectInfo.targetText;
             console.log(`  -> page.selectOption("${selectInfo.targetText}") OK`);
-            await page.waitForTimeout(500); // give Bitmovin time to update overlay
+            // intentional fall-through to poll below
           } catch (err: any) {
             console.log(`  -> page.selectOption failed: ${err.message?.slice(0, 100)}`);
             // Fallback: synthetic events (works inconsistently but better than nothing)
@@ -510,11 +510,16 @@ test.describe('Guide', () => {
           }
         }
 
-        // Close settings panel
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(700);
+        // Close the settings panel by clicking the gear again (toggle closed).
+        // Using Escape may trigger Bitmovin's cancel handler and revert CC selection.
+        await page.mouse.click(gearCoords.x, gearCoords.y);
 
-        const final = await readOverlay();
+        // Poll the subtitle overlay for up to 3 s — Bitmovin updates it asynchronously.
+        let final = await readOverlay();
+        for (let poll = 0; poll < 6 && (mode === 'on' ? final.hidden : !final.hidden); poll++) {
+          await page.waitForTimeout(500);
+          final = await readOverlay();
+        }
         const success = mode === 'on' ? !final.hidden : final.hidden;
         console.log(`  -> Final overlay: ${JSON.stringify(final)} success=${success}`);
 
