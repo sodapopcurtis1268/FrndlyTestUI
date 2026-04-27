@@ -30,6 +30,7 @@ export default defineConfig({
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
     ['list'],
     ['json', { outputFile: 'test-results/results.json' }],
+    ['./utils/testrailReporter.ts'],
   ],
 
   use: {
