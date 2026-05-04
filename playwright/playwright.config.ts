@@ -146,6 +146,21 @@ export default defineConfig({
       dependencies: ['setup'],
     },
 
+    // ── Navigation suite ─────────────────────────────────────────────────────
+    // UX / Usability tests: focused states, keyboard navigation, header behaviour.
+    //   npx playwright test --project=navigation
+    {
+      name: 'navigation',
+      testMatch: /\/navigation\/.*\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+        storageState: '.auth/user.json',
+        video: 'on',
+      },
+      dependencies: ['setup'],
+    },
+
     // Uncomment to add cross-browser coverage:
     // { name: 'smoke-firefox',     testMatch: /\/(liveNow|trendingMovies|frndlyTV)\.spec\.ts/,     use: { ...devices['Desktop Firefox'], storageState: '.auth/user.json' }, dependencies: ['setup'] },
     // { name: 'regression-webkit', testMatch: /\/(homePageRows|assetPlayback)\.spec\.ts/, use: { ...devices['Desktop Safari'],  storageState: '.auth/user.json' }, dependencies: ['setup'] },
