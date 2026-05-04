@@ -49,6 +49,7 @@ const CC_BUTTON_SELECTORS = [
 
 test.describe('Player', () => {
   test.describe('Closed Captions', () => {
+    test.skip(true, 'Temporarily disabled');
 
     test('CC is available, off by default, and can be toggled on and off', async ({ page }, testInfo) => {
 

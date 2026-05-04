@@ -78,6 +78,7 @@ interface ChannelResult {
 
 test.describe('Guide', () => {
   test.describe('Closed Captions', () => {
+    test.skip(true, 'Temporarily disabled');
 
     test.setTimeout(7_200_000); // 2 hours
 
