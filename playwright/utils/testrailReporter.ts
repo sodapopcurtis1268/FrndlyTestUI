@@ -1,27 +1,21 @@
 /**
  * TestRail reporter for Playwright.
  *
- * Automatically creates a TestRail run and posts test results when credentials
- * are configured. Tests are matched to TestRail cases by embedding the case ID
- * in the test title:
+ * Automatically creates a TestRail run, posts test results, and attaches
+ * screenshots and videos when credentials are configured.
  *
+ * Tests are matched to TestRail cases by embedding the case ID in the title:
  *   test('Login loads within SLA [C1001]', async ({ page }) => { ... });
  *
  * Required env vars (in playwright/.env or CI secrets):
  *   TESTRAIL_URL         https://frndlytv.testrail.io
  *   TESTRAIL_USER        your-email@example.com
  *   TESTRAIL_API_KEY     your-api-key
- *   TESTRAIL_PROJECT_ID  243
+ *   TESTRAIL_PROJECT_ID  172
  *
  * Optional:
- *   TESTRAIL_SUITE_ID    Suite ID (only needed for multi-suite projects)
+ *   TESTRAIL_SUITE_ID    Suite ID (required for multi-suite projects)
  *   TESTRAIL_RUN_NAME    Override the auto-generated run name
- *
- * Registration in playwright.config.ts:
- *   reporter: [
- *     ['html', ...],
- *     ['./utils/testrailReporter.ts'],
- *   ]
  *
  * TestRail status IDs used:
  *   1 = Passed
@@ -36,13 +30,15 @@ import type {
   TestResult,
 } from '@playwright/test/reporter';
 import * as https from 'https';
-import * as http from 'http';
+import * as http  from 'http';
+import * as fs    from 'fs';
 
 interface TRResult {
-  case_id:   number;
-  status_id: number;
-  elapsed?:  string;
-  comment?:  string;
+  case_id:     number;
+  status_id:   number;
+  elapsed?:    string;
+  comment?:    string;
+  attachments: Array<{ name: string; contentType: string; path?: string; body?: Buffer }>;
 }
 
 const TR_STATUS: Record<string, number> = {
@@ -66,10 +62,10 @@ class TestRailReporter implements Reporter {
   private collected:   TRResult[]             = [];
 
   constructor() {
-    const url      = process.env.TESTRAIL_URL        ?? '';
-    const user     = process.env.TESTRAIL_USER       ?? '';
-    const apiKey   = process.env.TESTRAIL_API_KEY    ?? '';
-    const projId   = process.env.TESTRAIL_PROJECT_ID ?? '';
+    const url    = process.env.TESTRAIL_URL        ?? '';
+    const user   = process.env.TESTRAIL_USER       ?? '';
+    const apiKey = process.env.TESTRAIL_API_KEY    ?? '';
+    const projId = process.env.TESTRAIL_PROJECT_ID ?? '';
 
     this.enabled   = !!(url && user && apiKey && projId);
     this.auth      = Buffer.from(`${user}:${apiKey}`).toString('base64');
@@ -78,7 +74,6 @@ class TestRailReporter implements Reporter {
     this.runName   = process.env.TESTRAIL_RUN_NAME
       ?? `Playwright — ${new Date().toISOString().slice(0, 19).replace('T', ' ')} UTC`;
 
-    // Parse hostname / protocol from TESTRAIL_URL (e.g. https://frndlytv.testrail.io)
     try {
       const parsed  = new URL(url);
       this.hostname = parsed.hostname;
@@ -90,9 +85,6 @@ class TestRailReporter implements Reporter {
   }
 
   // ── HTTP helper ────────────────────────────────────────────────────────────
-  // TestRail's API path contains a literal '?' (e.g. /index.php?/api/v2/...)
-  // which URL parsers treat as a query string separator — so we build the
-  // path string manually and pass it directly to http(s).request.
   private request(method: 'GET' | 'POST', endpoint: string, body?: object): Promise<any> {
     return new Promise((resolve, reject) => {
       const path = `/index.php?/api/v2/${endpoint}`;
@@ -105,8 +97,8 @@ class TestRailReporter implements Reporter {
           path,
           method,
           headers: {
-            Authorization:  `Basic ${this.auth}`,
-            'Content-Type': 'application/json',
+            Authorization:    `Basic ${this.auth}`,
+            'Content-Type':   'application/json',
             'Content-Length': Buffer.byteLength(data),
           },
         },
@@ -126,6 +118,53 @@ class TestRailReporter implements Reporter {
     });
   }
 
+  // ── Multipart file attachment ──────────────────────────────────────────────
+  private attachToResult(
+    resultId: number,
+    att: { name: string; contentType: string; path?: string; body?: Buffer },
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let data: Buffer;
+      try {
+        data = att.path ? fs.readFileSync(att.path) : (att.body ?? Buffer.alloc(0));
+      } catch {
+        return resolve();   // file may not exist (video not flushed yet, etc.)
+      }
+      if (!data.length) return resolve();
+
+      const ext      = att.contentType === 'video/webm' ? '.webm' : '.png';
+      const filename = att.name.replace(/[^a-z0-9_\-. ]/gi, '_') + ext;
+      const boundary = '----PlaywrightBoundary' + Date.now();
+      const CRLF     = '\r\n';
+
+      const header = Buffer.from(
+        `--${boundary}${CRLF}` +
+        `Content-Disposition: form-data; name="attachment"; filename="${filename}"${CRLF}` +
+        `Content-Type: ${att.contentType}${CRLF}${CRLF}`,
+      );
+      const footer = Buffer.from(`${CRLF}--${boundary}--${CRLF}`);
+      const body   = Buffer.concat([header, data, footer]);
+
+      const mod = this.protocol === 'https:' ? https : http;
+      const req = mod.request(
+        {
+          hostname: this.hostname,
+          path:     `/index.php?/api/v2/add_attachment_to_result/${resultId}`,
+          method:   'POST',
+          headers:  {
+            Authorization:    `Basic ${this.auth}`,
+            'Content-Type':   `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': body.length,
+          },
+        },
+        (res) => { res.resume(); res.on('end', resolve); },
+      );
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+  }
+
   // ── Playwright reporter hooks ──────────────────────────────────────────────
 
   onBegin(): void {
@@ -134,7 +173,6 @@ class TestRailReporter implements Reporter {
       return;
     }
 
-    // Kick off run creation immediately; await the Promise in onEnd.
     this.runCreation = (async (): Promise<number | null> => {
       try {
         const payload: Record<string, unknown> = {
@@ -158,19 +196,24 @@ class TestRailReporter implements Reporter {
   onTestEnd(test: TestCase, result: TestResult): void {
     if (!this.enabled) return;
 
-    // Match [C123] or [c123] anywhere in the test title
     const match = test.title.match(/\[[Cc](\d+)\]/);
     if (!match) return;
 
-    const elapsed   = Math.max(1, Math.ceil(result.duration / 1000));
-    const statusId  = TR_STATUS[result.status] ?? 4;
-    const comment   = result.error?.message?.slice(0, 500);
+    const elapsed  = Math.max(1, Math.ceil(result.duration / 1000));
+    const statusId = TR_STATUS[result.status] ?? 4;
+    const comment  = result.error?.message?.slice(0, 500);
+
+    // Collect only image/video attachments (skip JSON data blobs)
+    const attachments = result.attachments.filter(
+      a => a.contentType === 'image/png' || a.contentType === 'video/webm',
+    );
 
     this.collected.push({
       case_id:   parseInt(match[1], 10),
       status_id: statusId,
       elapsed:   `${elapsed}s`,
       ...(comment ? { comment } : {}),
+      attachments,
     });
   }
 
@@ -186,13 +229,51 @@ class TestRailReporter implements Reporter {
     }
 
     try {
+      // ── Post results ────────────────────────────────────────────────────────
       const res = await this.request(
         'POST',
         `add_results_for_cases/${runId}`,
-        { results: this.collected },
+        {
+          results: this.collected.map(({ case_id, status_id, elapsed, comment }) => ({
+            case_id,
+            status_id,
+            elapsed,
+            ...(comment ? { comment } : {}),
+          })),
+        },
       );
       if (res?.error) throw new Error(res.error);
       console.log(`[TestRail] Posted ${this.collected.length} result(s) to run #${runId}.`);
+
+      // ── Build case_id → result_id map from response ─────────────────────────
+      // add_results_for_cases returns an array of { id, case_id, ... }
+      const resultMap = new Map<number, number>();
+      if (Array.isArray(res)) {
+        for (const r of res) {
+          if (r.case_id && r.id) resultMap.set(r.case_id, r.id);
+        }
+      }
+
+      // ── Attach screenshots and videos ───────────────────────────────────────
+      let attachCount = 0;
+      for (const collected of this.collected) {
+        const resultId = resultMap.get(collected.case_id);
+        if (!resultId || collected.attachments.length === 0) continue;
+
+        for (const att of collected.attachments) {
+          try {
+            await this.attachToResult(resultId, att);
+            attachCount++;
+          } catch (e: any) {
+            console.warn(`[TestRail] Failed to attach "${att.name}" to result #${resultId}: ${e.message}`);
+          }
+        }
+      }
+
+      if (attachCount > 0) {
+        console.log(`[TestRail] Attached ${attachCount} file(s) to results in run #${runId}.`);
+      }
+
     } catch (err: any) {
       console.error(`[TestRail] Failed to post results: ${err.message}`);
     }

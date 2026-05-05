@@ -50,6 +50,11 @@ jobs:
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
           VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
 
       - name: Write executive summary
         if: always()
@@ -223,6 +228,11 @@ jobs:
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
           VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
 
       - name: Write executive summary
         if: always()
@@ -374,6 +384,11 @@ jobs:
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
           VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
 
       - name: Write executive summary
         if: always()
@@ -525,6 +540,11 @@ jobs:
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
           VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
 
       - name: Write executive summary
         if: always()
@@ -675,6 +695,11 @@ jobs:
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
           VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
 
       - name: Write executive summary
         if: always()
@@ -817,6 +842,11 @@ jobs:
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
           VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
 
       - name: Write executive summary
         if: always()
