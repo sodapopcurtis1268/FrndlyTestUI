@@ -85,6 +85,16 @@ class TestRailReporter implements Reporter {
       this.hostname = '';
       this.protocol = 'https:';
     }
+
+    console.log(
+      `[TestRail] Config — enabled=${this.enabled}` +
+      ` url=${url || '(not set)'}` +
+      ` user=${user || '(not set)'}` +
+      ` apiKey=${apiKey ? apiKey.slice(0, 4) + '…' : '(not set)'}` +
+      ` projectId=${projId || '(not set)'}` +
+      ` suiteId=${this.suiteId ?? '(not set)'}` +
+      ` runId=${this.existingRunId ?? '(none — will create)'}`,
+    );
   }
 
   // ── HTTP helper ────────────────────────────────────────────────────────────
