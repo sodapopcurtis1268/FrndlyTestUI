@@ -14,6 +14,7 @@
  *   TESTRAIL_PROJECT_ID  172
  *
  * Optional:
+ *   TESTRAIL_RUN_ID      Use an existing run ID instead of creating a new one
  *   TESTRAIL_SUITE_ID    Suite ID (required for multi-suite projects)
  *   TESTRAIL_RUN_NAME    Override the auto-generated run name
  *
@@ -57,6 +58,7 @@ class TestRailReporter implements Reporter {
   private readonly projectId: string;
   private readonly suiteId:   string | null;
   private readonly runName:   string;
+  private readonly existingRunId: number | null;
 
   private runCreation: Promise<number | null> = Promise.resolve(null);
   private collected:   TRResult[]             = [];
@@ -70,7 +72,8 @@ class TestRailReporter implements Reporter {
     this.enabled   = !!(url && user && apiKey && projId);
     this.auth      = Buffer.from(`${user}:${apiKey}`).toString('base64');
     this.projectId = projId;
-    this.suiteId   = process.env.TESTRAIL_SUITE_ID ?? null;
+    this.suiteId       = process.env.TESTRAIL_SUITE_ID ?? null;
+    this.existingRunId = process.env.TESTRAIL_RUN_ID ? parseInt(process.env.TESTRAIL_RUN_ID, 10) : null;
     this.runName   = process.env.TESTRAIL_RUN_NAME
       ?? `Playwright — ${new Date().toISOString().slice(0, 19).replace('T', ' ')} UTC`;
 
@@ -170,6 +173,13 @@ class TestRailReporter implements Reporter {
   onBegin(): void {
     if (!this.enabled) {
       console.log('[TestRail] Skipped — TESTRAIL_* env vars not set.');
+      return;
+    }
+
+    // If an existing run ID is supplied, skip run creation entirely.
+    if (this.existingRunId) {
+      console.log(`[TestRail] Using existing run #${this.existingRunId}.`);
+      this.runCreation = Promise.resolve(this.existingRunId);
       return;
     }
 
