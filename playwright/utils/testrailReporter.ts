@@ -30,12 +30,16 @@ import type {
   TestCase,
   TestResult,
 } from '@playwright/test/reporter';
-import * as https from 'https';
-import * as http  from 'http';
-import * as fs    from 'fs';
+import * as https        from 'https';
+import * as http         from 'http';
+import * as fs           from 'fs';
+import * as path         from 'path';
+import * as os           from 'os';
+import { execSync }      from 'child_process';
 
 interface TRResult {
   case_id:     number;
+  title:       string;
   status_id:   number;
   elapsed?:    string;
   comment?:    string;
@@ -178,6 +182,57 @@ class TestRailReporter implements Reporter {
     });
   }
 
+  // ── Multipart attachment to a run (not a result) ──────────────────────────
+  private attachToRun(
+    runId:       number,
+    data:        Buffer,
+    filename:    string,
+    contentType: string,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!data.length) return resolve();
+
+      const boundary = '----PlaywrightBoundary' + Date.now();
+      const CRLF     = '\r\n';
+
+      const header = Buffer.from(
+        `--${boundary}${CRLF}` +
+        `Content-Disposition: form-data; name="attachment"; filename="${filename}"${CRLF}` +
+        `Content-Type: ${contentType}${CRLF}${CRLF}`,
+      );
+      const footer = Buffer.from(`${CRLF}--${boundary}--${CRLF}`);
+      const body   = Buffer.concat([header, data, footer]);
+
+      const mod = this.protocol === 'https:' ? https : http;
+      const req = mod.request(
+        {
+          hostname: this.hostname,
+          path:     `/index.php?/api/v2/add_attachment_to_run/${runId}`,
+          method:   'POST',
+          headers:  {
+            Authorization:    `Basic ${this.auth}`,
+            'Content-Type':   `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': body.length,
+          },
+        },
+        (res) => {
+          let raw = '';
+          res.on('data', (chunk: Buffer) => { raw += chunk.toString(); });
+          res.on('end', () => {
+            try {
+              const parsed = JSON.parse(raw);
+              if (parsed?.error) reject(new Error(parsed.error));
+              else resolve();
+            } catch { resolve(); }
+          });
+        },
+      );
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+  }
+
   // ── Playwright reporter hooks ──────────────────────────────────────────────
 
   onBegin(): void {
@@ -230,6 +285,7 @@ class TestRailReporter implements Reporter {
 
     this.collected.push({
       case_id:   parseInt(match[1], 10),
+      title:     test.title,
       status_id: statusId,
       elapsed:   `${elapsed}s`,
       ...(comment ? { comment } : {}),
@@ -292,6 +348,58 @@ class TestRailReporter implements Reporter {
 
       if (attachCount > 0) {
         console.log(`[TestRail] Attached ${attachCount} file(s) to results in run #${runId}.`);
+      }
+
+      // ── Attach JSON summary to run ─────────────────────────────────────────
+      const STATUS_LABEL: Record<number, string> = { 1: 'passed', 4: 'skipped', 5: 'failed' };
+      const summary = {
+        runId,
+        generatedAt: new Date().toISOString(),
+        totals: {
+          passed:  this.collected.filter(r => r.status_id === 1).length,
+          failed:  this.collected.filter(r => r.status_id === 5).length,
+          skipped: this.collected.filter(r => r.status_id === 4).length,
+          total:   this.collected.length,
+        },
+        results: this.collected.map(r => ({
+          case_id: r.case_id,
+          title:   r.title,
+          status:  STATUS_LABEL[r.status_id] ?? 'unknown',
+          elapsed: r.elapsed,
+          ...(r.comment ? { comment: r.comment } : {}),
+        })),
+      };
+
+      try {
+        await this.attachToRun(
+          runId,
+          Buffer.from(JSON.stringify(summary, null, 2)),
+          'playwright-results-summary.json',
+          'application/json',
+        );
+        console.log(`[TestRail] Attached results summary JSON to run #${runId}.`);
+      } catch (e: any) {
+        console.warn(`[TestRail] Could not attach summary JSON: ${e.message}`);
+      }
+
+      // ── Attach zipped Playwright HTML report to run ────────────────────────
+      const reportDir = path.join(process.cwd(), 'playwright-report');
+      if (fs.existsSync(reportDir)) {
+        const zipPath = path.join(os.tmpdir(), `playwright-report-${Date.now()}.zip`);
+        try {
+          execSync(`zip -r "${zipPath}" "playwright-report"`, {
+            cwd:   process.cwd(),
+            stdio: 'ignore',
+          });
+          const zipData = fs.readFileSync(zipPath);
+          await this.attachToRun(runId, zipData, 'playwright-report.zip', 'application/zip');
+          fs.unlinkSync(zipPath);
+          console.log(`[TestRail] Attached playwright-report.zip to run #${runId}.`);
+        } catch (e: any) {
+          console.warn(`[TestRail] Could not attach playwright-report.zip: ${e.message}`);
+        }
+      } else {
+        console.log(`[TestRail] playwright-report/ not found — skipping HTML report attachment.`);
       }
 
     } catch (err: any) {
