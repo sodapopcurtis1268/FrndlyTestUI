@@ -84,7 +84,7 @@ test.describe('Guide', () => {
 
     const ccMode    = config.guideCC === 'off' ? 'off' : 'on';
     const chTarget  = config.guideChannel || 'all';
-    test(`Guide CC [mode=${ccMode}] [channels=${chTarget}]`, async ({ page }, testInfo) => {
+    test(`Guide CC [mode=${ccMode}] [channels=${chTarget}] [C420697]`, async ({ page }, testInfo) => {
 
       const guideUrl = config.watchUrl + '/guide';
 

@@ -38,7 +38,7 @@ const EXCLUDED_ROWS = new Set([
 
 const MAX_DRM_RETRIES = 3;
 
-test('@smoke Random row — time to first frame', async ({ page }) => {
+test('@smoke Random row — time to first frame [C420670]', async ({ page }) => {
   // ── Navigate to /home (already authenticated via storageState) ───────────────
   await page.goto(config.homeUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(

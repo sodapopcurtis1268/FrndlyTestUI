@@ -51,7 +51,7 @@ test.describe('Player', () => {
   test.describe('Closed Captions', () => {
     test.skip(true, 'Temporarily disabled');
 
-    test('CC is available, off by default, and can be toggled on and off', async ({ page }, testInfo) => {
+    test('CC is available, off by default, and can be toggled on and off [C420696]', async ({ page }, testInfo) => {
 
       // ── Step 1: Navigate to Home ──────────────────────────────────────────
       await page.goto(config.homeUrl, {

@@ -24,7 +24,7 @@ test.use({ video: 'on' });
 test.describe('Header Navigation', () => {
   test.describe('Focused State Validation', () => {
 
-    test('active nav item shows white highlight with green underline', async ({ page }, testInfo) => {
+    test('active nav item shows white highlight with green underline [C420692]', async ({ page }, testInfo) => {
 
       // ── Step 1: Navigate to home ────────────────────────────────────────────
       await page.goto(config.homeUrl, { waitUntil: 'domcontentloaded' });

@@ -27,7 +27,7 @@ const STEP_PAUSE_MS = 250;  // pause between each arrow click / wheel event
 test.describe('Home Screen', () => {
   test.describe('Performance', () => {
 
-    test('Navigate within rows — no visual lag during left/right scroll', async ({ page }, testInfo) => {
+    test('Navigate within rows — no visual lag during left/right scroll [C420691]', async ({ page }, testInfo) => {
 
       // ── Step 1: Navigate to Home ──────────────────────────────────────────
       await page.goto(config.homeUrl, {

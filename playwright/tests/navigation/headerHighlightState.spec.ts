@@ -24,7 +24,7 @@ test.use({ video: 'on' });
 test.describe('Header Navigation', () => {
   test.describe('Highlight State Validation', () => {
 
-    test('current page nav item shows white bold highlight while another item is hovered', async ({ page }, testInfo) => {
+    test('current page nav item shows white bold highlight while another item is hovered [C420693]', async ({ page }, testInfo) => {
 
       // ── Step 1: Navigate to /home ───────────────────────────────────────────
       await page.goto(config.homeUrl, { waitUntil: 'domcontentloaded' });

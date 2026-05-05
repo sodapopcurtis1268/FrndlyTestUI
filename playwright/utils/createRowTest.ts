@@ -30,10 +30,11 @@ interface RowTestOptions {
  *   createRowTest('Blockbuster Boulevard');
  *   createRowTest('Most Watched', { skipOnTimeout: true });
  */
-export function createRowTest(rowName: string, options: RowTestOptions = {}): void {
-  const slug = rowName.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
+export function createRowTest(rowName: string, options: RowTestOptions = {}, caseId?: number): void {
+  const slug    = rowName.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
+  const caseTag = caseId ? ` [C${caseId}]` : '';
 
-  test(`@regression ${rowName} — first asset TTFF`, async ({ page }, testInfo) => {
+  test(`@regression ${rowName} — first asset TTFF${caseTag}`, async ({ page }, testInfo) => {
       // ── Navigate to /home ────────────────────────────────────────────────────
       // Explicit timeout prevents page.goto from consuming the full test budget
       // on a slow server — budget: 30 s for goto, 30 s for Angular render.

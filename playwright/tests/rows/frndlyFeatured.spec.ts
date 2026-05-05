@@ -1,2 +1,2 @@
 import { createRowTest } from '../../utils/createRowTest';
-createRowTest('Frndly Featured');
+createRowTest('Frndly Featured', {}, 420673);

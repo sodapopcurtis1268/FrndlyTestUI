@@ -21,7 +21,7 @@ test.use({ video: 'on' });
 test.describe('Header Navigation', () => {
   test.describe('Unfocused State Validation', () => {
 
-    test('non-active nav items display light grey text when not focused or hovered', async ({ page }, testInfo) => {
+    test('non-active nav items display light grey text when not focused or hovered [C420694]', async ({ page }, testInfo) => {
 
       // ── Step 1: Navigate to /home ───────────────────────────────────────────
       await page.goto(config.homeUrl, { waitUntil: 'domcontentloaded' });

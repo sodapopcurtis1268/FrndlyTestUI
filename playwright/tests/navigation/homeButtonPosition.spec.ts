@@ -29,7 +29,7 @@ test.use({ video: 'on' });
 test.describe('Header Navigation', () => {
   test.describe('HOME | Main Navigation', () => {
 
-    test('HOME button is displayed immediately to the left of Guide and to the right of Search', async ({ page }, testInfo) => {
+    test('HOME button is displayed immediately to the left of Guide and to the right of Search [C420695]', async ({ page }, testInfo) => {
 
       // ── Step 1: Open FrndlyTV app ────────────────────────────────────────────
       await page.goto(config.homeUrl, { waitUntil: 'domcontentloaded' });

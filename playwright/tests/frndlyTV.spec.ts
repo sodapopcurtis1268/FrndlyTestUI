@@ -13,7 +13,7 @@ test.describe('Frndly TV E2E', () => {
   // Override the project-level storageState so cookies are not pre-loaded.
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test('@smoke login, play asset, open settings, sign out', async ({ page }) => {
+  test('@smoke login, play asset, open settings, sign out [C420668]', async ({ page }) => {
     // ── Login ────────────────────────────────────────────────────────────────
     // FrndlyLoginPage.login() navigates directly to /authenticator — more
     // reliable than clicking the landing-page "Sign In" link (which points to
