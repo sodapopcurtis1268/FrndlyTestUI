@@ -306,6 +306,7 @@ class TestRailReporter implements Reporter {
 
     try {
       // ── Post results ────────────────────────────────────────────────────────
+      console.log(`[TestRail] Posting ${this.collected.length} result(s) to run #${runId} — case IDs: ${this.collected.map(r => r.case_id).join(', ')}`);
       const res = await this.request(
         'POST',
         `add_results_for_cases/${runId}`,
@@ -318,7 +319,7 @@ class TestRailReporter implements Reporter {
           })),
         },
       );
-      if (res?.error) throw new Error(res.error);
+      if (res?.error) throw new Error(`${res.error} (run=${runId}, response=${JSON.stringify(res).slice(0, 300)})`);
       console.log(`[TestRail] Posted ${this.collected.length} result(s) to run #${runId}.`);
 
       // ── Build case_id → result_id map from response ─────────────────────────
