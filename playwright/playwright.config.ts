@@ -61,6 +61,18 @@ export default defineConfig({
       },
     },
 
+    // ── Login suite ──────────────────────────────────────────────────────────
+    // Verifies end-to-end login flow with real credentials (no saved auth state).
+    //   npx playwright test --project=login
+    {
+      name: 'login',
+      testMatch: /\/login\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+      },
+    },
+
     // ── Smoke suite ──────────────────────────────────────────────────────────
     // Fast sanity check (~3 tests). Run after every deploy or code change.
     //   npx playwright test --project=smoke
