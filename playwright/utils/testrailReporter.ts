@@ -64,8 +64,7 @@ class TestRailReporter implements Reporter {
   private readonly runName:   string;
   private readonly existingRunId: number | null;
 
-  private runCreation: Promise<number | null> = Promise.resolve(null);
-  private collected:   TRResult[]             = [];
+  private collected: TRResult[] = [];
 
   constructor() {
     const url    = process.env.TESTRAIL_URL        ?? '';
@@ -238,34 +237,32 @@ class TestRailReporter implements Reporter {
   onBegin(): void {
     if (!this.enabled) {
       console.log('[TestRail] Skipped — TESTRAIL_* env vars not set.');
-      return;
     }
+  }
 
-    // If an existing run ID is supplied, skip run creation entirely.
+  private async createRun(caseIds: number[]): Promise<number | null> {
     if (this.existingRunId) {
       console.log(`[TestRail] Using existing run #${this.existingRunId}.`);
-      this.runCreation = Promise.resolve(this.existingRunId);
-      return;
+      return this.existingRunId;
     }
 
-    this.runCreation = (async (): Promise<number | null> => {
-      try {
-        const payload: Record<string, unknown> = {
-          name:        this.runName,
-          include_all: true,
-        };
-        if (this.suiteId) payload.suite_id = parseInt(this.suiteId, 10);
+    try {
+      const payload: Record<string, unknown> = {
+        name:        this.runName,
+        include_all: false,
+        case_ids:    caseIds,
+      };
+      if (this.suiteId) payload.suite_id = parseInt(this.suiteId, 10);
 
-        const run = await this.request('POST', `add_run/${this.projectId}`, payload);
-        if (!run?.id) throw new Error(`Unexpected response: ${JSON.stringify(run).slice(0, 200)}`);
+      const run = await this.request('POST', `add_run/${this.projectId}`, payload);
+      if (!run?.id) throw new Error(`Unexpected response: ${JSON.stringify(run).slice(0, 200)}`);
 
-        console.log(`[TestRail] Created run #${run.id}  →  ${run.url ?? this.hostname}`);
-        return run.id as number;
-      } catch (err: any) {
-        console.error(`[TestRail] Failed to create run: ${err.message}`);
-        return null;
-      }
-    })();
+      console.log(`[TestRail] Created run #${run.id}  →  ${run.url ?? this.hostname}`);
+      return run.id as number;
+    } catch (err: any) {
+      console.error(`[TestRail] Failed to create run: ${err.message}`);
+      return null;
+    }
   }
 
   onTestEnd(test: TestCase, result: TestResult): void {
@@ -296,13 +293,14 @@ class TestRailReporter implements Reporter {
   async onEnd(_result: FullResult): Promise<void> {
     if (!this.enabled) return;
 
-    const runId = await this.runCreation;
-    if (!runId) return;
-
     if (this.collected.length === 0) {
       console.log('[TestRail] No [C###]-tagged tests found — nothing to post.');
       return;
     }
+
+    const caseIds = this.collected.map(r => r.case_id);
+    const runId = await this.createRun(caseIds);
+    if (!runId) return;
 
     try {
       // ── Post results ────────────────────────────────────────────────────────
