@@ -34,6 +34,8 @@ import * as https        from 'https';
 import * as http         from 'http';
 import * as fs           from 'fs';
 import * as path         from 'path';
+import * as os           from 'os';
+import { execSync }      from 'child_process';
 
 interface TRResult {
   case_id:     number;
@@ -372,6 +374,26 @@ class TestRailReporter implements Reporter {
         console.log(`[TestRail] Posted summary as run description on run #${runId}.`);
       } catch (e: any) {
         console.warn(`[TestRail] Could not update run description: ${e.message}`);
+      }
+
+      // ── Attach zipped Playwright HTML report to run ────────────────────────
+      const reportDir = path.join(process.cwd(), 'playwright-report');
+      if (fs.existsSync(reportDir)) {
+        const zipPath = path.join(os.tmpdir(), `playwright-report-${Date.now()}.zip`);
+        try {
+          execSync(`zip -r "${zipPath}" "playwright-report"`, {
+            cwd:   process.cwd(),
+            stdio: 'ignore',
+          });
+          const zipData = fs.readFileSync(zipPath);
+          await this.attachToRun(runId, zipData, 'playwright-report.zip', 'application/zip');
+          fs.unlinkSync(zipPath);
+          console.log(`[TestRail] Attached playwright-report.zip to run #${runId}.`);
+        } catch (e: any) {
+          console.warn(`[TestRail] Could not attach playwright-report.zip: ${e.message}`);
+        }
+      } else {
+        console.log(`[TestRail] playwright-report/ not found — skipping HTML report attachment.`);
       }
 
     } catch (err: any) {
