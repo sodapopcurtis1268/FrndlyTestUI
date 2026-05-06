@@ -34,8 +34,6 @@ import * as https        from 'https';
 import * as http         from 'http';
 import * as fs           from 'fs';
 import * as path         from 'path';
-import * as os           from 'os';
-import { execSync }      from 'child_process';
 
 interface TRResult {
   case_id:     number;
@@ -350,56 +348,30 @@ class TestRailReporter implements Reporter {
         console.log(`[TestRail] Attached ${attachCount} file(s) to results in run #${runId}.`);
       }
 
-      // ── Attach JSON summary to run ─────────────────────────────────────────
+      // ── Post summary as run description (inline text, no file attachments) ──
       const STATUS_LABEL: Record<number, string> = { 1: 'passed', 4: 'skipped', 5: 'failed' };
-      const summary = {
-        runId,
-        generatedAt: new Date().toISOString(),
-        totals: {
-          passed:  this.collected.filter(r => r.status_id === 1).length,
-          failed:  this.collected.filter(r => r.status_id === 5).length,
-          skipped: this.collected.filter(r => r.status_id === 4).length,
-          total:   this.collected.length,
-        },
-        results: this.collected.map(r => ({
-          case_id: r.case_id,
-          title:   r.title,
-          status:  STATUS_LABEL[r.status_id] ?? 'unknown',
-          elapsed: r.elapsed,
-          ...(r.comment ? { comment: r.comment } : {}),
-        })),
-      };
+      const passed  = this.collected.filter(r => r.status_id === 1).length;
+      const failed  = this.collected.filter(r => r.status_id === 5).length;
+      const skipped = this.collected.filter(r => r.status_id === 4).length;
+      const total   = this.collected.length;
+
+      const lines: string[] = [
+        `Playwright run — ${new Date().toISOString().slice(0, 19).replace('T', ' ')} UTC`,
+        `Totals: ${passed} passed, ${failed} failed, ${skipped} skipped (${total} total)`,
+        '',
+        'Results:',
+        ...this.collected.map(r => {
+          const status = STATUS_LABEL[r.status_id] ?? 'unknown';
+          const line = `  [C${r.case_id}] ${r.title} — ${status} (${r.elapsed})`;
+          return r.comment ? `${line}\n    ${r.comment}` : line;
+        }),
+      ];
 
       try {
-        await this.attachToRun(
-          runId,
-          Buffer.from(JSON.stringify(summary, null, 2)),
-          'playwright-results-summary.json',
-          'application/json',
-        );
-        console.log(`[TestRail] Attached results summary JSON to run #${runId}.`);
+        await this.request('POST', `update_run/${runId}`, { description: lines.join('\n') });
+        console.log(`[TestRail] Posted summary as run description on run #${runId}.`);
       } catch (e: any) {
-        console.warn(`[TestRail] Could not attach summary JSON: ${e.message}`);
-      }
-
-      // ── Attach zipped Playwright HTML report to run ────────────────────────
-      const reportDir = path.join(process.cwd(), 'playwright-report');
-      if (fs.existsSync(reportDir)) {
-        const zipPath = path.join(os.tmpdir(), `playwright-report-${Date.now()}.zip`);
-        try {
-          execSync(`zip -r "${zipPath}" "playwright-report"`, {
-            cwd:   process.cwd(),
-            stdio: 'ignore',
-          });
-          const zipData = fs.readFileSync(zipPath);
-          await this.attachToRun(runId, zipData, 'playwright-report.zip', 'application/zip');
-          fs.unlinkSync(zipPath);
-          console.log(`[TestRail] Attached playwright-report.zip to run #${runId}.`);
-        } catch (e: any) {
-          console.warn(`[TestRail] Could not attach playwright-report.zip: ${e.message}`);
-        }
-      } else {
-        console.log(`[TestRail] playwright-report/ not found — skipping HTML report attachment.`);
+        console.warn(`[TestRail] Could not update run description: ${e.message}`);
       }
 
     } catch (err: any) {
