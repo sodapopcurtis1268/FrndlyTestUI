@@ -1,2 +1,2 @@
 import { createRowTest } from '../../utils/createRowTest';
-createRowTest('History or Mystery');
+createRowTest('History or Mystery', {}, 420675);

@@ -2,7 +2,7 @@ name: Playwright Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/playwright-web-suite]
   pull_request:
   workflow_dispatch:    # Allows manual trigger from the GitHub Actions UI
 
@@ -11,6 +11,37 @@ on:
 # would add overhead for what is a short 4-step sequence.
 
 jobs:
+
+  # ── k6 API smoke ───────────────────────────────────────────────────────────
+  # Fast API gate: confirms all 7 frndlytv-api endpoints are reachable and
+  # returning 200. Runs in ~10s. Blocks the PR if any endpoint is down.
+  # Requires FRNDLY_SESSION_ID secret — refresh from playwright/.auth/user.json
+  # after running: npx playwright test --project=setup
+  k6-smoke:
+    name: "k6 API Smoke"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run k6 API smoke check
+        working-directory: playwright
+        env:
+          FRNDLY_SESSION_ID: ${{ secrets.FRNDLY_SESSION_ID }}
+        run: k6 run load-tests/smoke.js
+
+      - name: Upload k6 smoke report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: k6-smoke-report
+          path: playwright/load-tests/reports/smoke-report.html
+          retention-days: 14
 
   # ── Smoke ──────────────────────────────────────────────────────────────────
   # Fast sanity check: login, Live Now TTFF, random row TTFF, E2E.
@@ -48,8 +79,14 @@ jobs:
           WATCH_URL: ${{ secrets.WATCH_URL }}
           USERNAME: ${{ secrets.FRNDLY_USERNAME }}
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
-          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '5' }}
+          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
+          TESTRAIL_RUN_ID: ${{ secrets.TESTRAIL_RUN_ID }}
 
       - name: Write executive summary
         if: always()
@@ -221,8 +258,14 @@ jobs:
           WATCH_URL: ${{ secrets.WATCH_URL }}
           USERNAME: ${{ secrets.FRNDLY_USERNAME }}
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
-          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '5' }}
+          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
+          TESTRAIL_RUN_ID: ${{ secrets.TESTRAIL_RUN_ID }}
 
       - name: Write executive summary
         if: always()
@@ -372,8 +415,14 @@ jobs:
           WATCH_URL: ${{ secrets.WATCH_URL }}
           USERNAME: ${{ secrets.FRNDLY_USERNAME }}
           PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
-          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '5' }}
+          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
           VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
+          TESTRAIL_RUN_ID: ${{ secrets.TESTRAIL_RUN_ID }}
 
       - name: Write executive summary
         if: always()
@@ -487,3 +536,455 @@ jobs:
           name: test-results-homescreen
           path: playwright/test-results/
           retention-days: 7
+
+  # ── Player ─────────────────────────────────────────────────────────────────
+  # Functional tests for video player features (closed captions, etc.)
+  player:
+    name: "Player / Closed Captions"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: playwright/package-lock.json
+
+      - name: Install npm dependencies
+        run: npm ci
+        working-directory: playwright
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chrome
+        working-directory: playwright
+
+      - name: Run player tests
+        run: npx playwright test --project=player
+        working-directory: playwright
+        env:
+          CI: true
+          BASE_URL: ${{ secrets.BASE_URL }}
+          WATCH_URL: ${{ secrets.WATCH_URL }}
+          USERNAME: ${{ secrets.FRNDLY_USERNAME }}
+          PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
+          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
+          VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
+          TESTRAIL_RUN_ID: ${{ secrets.TESTRAIL_RUN_ID }}
+
+      - name: Write executive summary
+        if: always()
+        working-directory: playwright
+        env:
+          SUITE_NAME: Player
+          ARTIFACT_NAME: playwright-report-player
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+
+          let stats = { expected: 0, unexpected: 0, skipped: 0, flaky: 0 };
+          let suites = [];
+
+          try {
+            const raw = fs.readFileSync('test-results/results.json', 'utf8');
+            const data = JSON.parse(raw);
+            stats = data.stats ?? stats;
+
+            function walk(suite, parentPath) {
+              if (!suite) return;
+              const path = [parentPath, suite.title].filter(Boolean).join(' / ');
+              (suite.suites ?? []).forEach(s => walk(s, path));
+              (suite.specs ?? []).forEach(spec => {
+                spec.tests?.forEach(t => {
+                  const status = t.results?.[0]?.status ?? 'unknown';
+                  const duration = t.results?.[0]?.duration ?? 0;
+                  const title = [path, spec.title].filter(Boolean).join(' / ');
+                  suites.push({ title, status, duration });
+                });
+              });
+            }
+            (data.suites ?? []).forEach(s => walk(s, ''));
+          } catch (e) {
+            console.error('Could not parse results.json:', e.message);
+          }
+
+          const total   = stats.expected + stats.unexpected + stats.skipped + stats.flaky;
+          const passed  = stats.expected;
+          const failed  = stats.unexpected;
+          const skipped = stats.skipped;
+          const flaky   = stats.flaky;
+          const suite   = process.env.SUITE_NAME ?? 'Tests';
+          const artifact = process.env.ARTIFACT_NAME ?? 'playwright-report';
+
+          const BLOCKS = 10;
+          const greenCount = total > 0 ? Math.round(((passed + flaky) / total) * BLOCKS) : 0;
+          const redCount   = failed > 0 ? Math.max(1, BLOCKS - greenCount) : 0;
+          const greyCount  = BLOCKS - greenCount - redCount;
+          const bar = '🟩'.repeat(greenCount) + '🟥'.repeat(redCount) + '⬜'.repeat(greyCount);
+          const pct = total > 0 ? Math.round(((passed + flaky) / total) * 100) : 0;
+
+          const successWord = passed === 1 ? 'success' : 'successes';
+          const failureWord = failed === 1 ? 'failure' : 'failures';
+          const headerIcon  = failed > 0 ? '📺❌' : '📺✅';
+
+          const lines = [];
+          lines.push(`## ${headerIcon} Frndly TV — ${suite}`);
+          lines.push('');
+          lines.push(`🎬 Video **'${suite}'** started with **${passed}** ${successWord} and **${failed}** ${failureWord}`);
+          lines.push('');
+          lines.push(`${bar}  **${pct}%** &nbsp;(${passed + flaky}/${total} passed${skipped > 0 ? ` · ${skipped} skipped` : ''}${flaky > 0 ? ` · ${flaky} flaky` : ''})`);
+          lines.push('');
+
+          if (failed > 0) {
+            lines.push('### ❌ Failures');
+            suites.filter(s => s.status === 'failed').forEach(s => {
+              lines.push(`- **${s.title}** (${(s.duration/1000).toFixed(1)} s)`);
+            });
+            lines.push('');
+          }
+
+          if (flaky > 0) {
+            lines.push('### 🔁 Flaky (passed on retry)');
+            suites.filter(s => s.status === 'flaky').forEach(s => {
+              lines.push(`- ${s.title}`);
+            });
+            lines.push('');
+          }
+
+          if (skipped > 0) {
+            lines.push('<details><summary>⏭️ Skipped tests</summary>');
+            lines.push('');
+            suites.filter(s => s.status === 'skipped').forEach(s => {
+              lines.push(`- ${s.title}`);
+            });
+            lines.push('');
+            lines.push('</details>');
+            lines.push('');
+          }
+
+          lines.push(`> 📄 Download **${artifact}** artifact above for videos, screenshots, and measurements.`);
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
+          console.log('Executive summary written.');
+          EOF
+
+      - name: Upload Playwright report (player)
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report-player
+          path: playwright/playwright-report/
+          retention-days: 30
+
+      - name: Upload test artifacts (player)
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: test-results-player
+          path: playwright/test-results/
+          retention-days: 7
+
+  # ── Navigation ─────────────────────────────────────────────────────────────
+  # UX / Usability tests: focused states, keyboard navigation, header behaviour.
+  navigation:
+    name: "Navigation / UX"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: playwright/package-lock.json
+
+      - name: Install npm dependencies
+        run: npm ci
+        working-directory: playwright
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chrome
+        working-directory: playwright
+
+      - name: Run navigation tests
+        run: npx playwright test --project=navigation
+        working-directory: playwright
+        env:
+          CI: true
+          BASE_URL: ${{ secrets.BASE_URL }}
+          WATCH_URL: ${{ secrets.WATCH_URL }}
+          USERNAME: ${{ secrets.FRNDLY_USERNAME }}
+          PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
+          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
+          VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
+          TESTRAIL_RUN_ID: ${{ secrets.TESTRAIL_RUN_ID }}
+
+      - name: Write executive summary
+        if: always()
+        working-directory: playwright
+        env:
+          SUITE_NAME: Navigation / UX
+          ARTIFACT_NAME: playwright-report-navigation
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+
+          let stats = { expected: 0, unexpected: 0, skipped: 0, flaky: 0 };
+          let suites = [];
+
+          try {
+            const raw = fs.readFileSync('test-results/results.json', 'utf8');
+            const data = JSON.parse(raw);
+            stats = data.stats ?? stats;
+
+            function walk(suite, parentPath) {
+              if (!suite) return;
+              const path = [parentPath, suite.title].filter(Boolean).join(' / ');
+              (suite.suites ?? []).forEach(s => walk(s, path));
+              (suite.specs ?? []).forEach(spec => {
+                spec.tests?.forEach(t => {
+                  const status = t.results?.[0]?.status ?? 'unknown';
+                  const duration = t.results?.[0]?.duration ?? 0;
+                  const title = [path, spec.title].filter(Boolean).join(' / ');
+                  suites.push({ title, status, duration });
+                });
+              });
+            }
+            (data.suites ?? []).forEach(s => walk(s, ''));
+          } catch (e) {
+            console.error('Could not parse results.json:', e.message);
+          }
+
+          const total   = stats.expected + stats.unexpected + stats.skipped + stats.flaky;
+          const passed  = stats.expected;
+          const failed  = stats.unexpected;
+          const skipped = stats.skipped;
+          const flaky   = stats.flaky;
+          const suite   = process.env.SUITE_NAME ?? 'Tests';
+          const artifact = process.env.ARTIFACT_NAME ?? 'playwright-report';
+
+          const BLOCKS = 10;
+          const greenCount = total > 0 ? Math.round(((passed + flaky) / total) * BLOCKS) : 0;
+          const redCount   = failed > 0 ? Math.max(1, BLOCKS - greenCount) : 0;
+          const greyCount  = BLOCKS - greenCount - redCount;
+          const bar = '🟩'.repeat(greenCount) + '🟥'.repeat(redCount) + '⬜'.repeat(greyCount);
+          const pct = total > 0 ? Math.round(((passed + flaky) / total) * 100) : 0;
+
+          const successWord = passed === 1 ? 'success' : 'successes';
+          const failureWord = failed === 1 ? 'failure' : 'failures';
+          const headerIcon  = failed > 0 ? '📺❌' : '📺✅';
+
+          const lines = [];
+          lines.push(`## ${headerIcon} Frndly TV — ${suite}`);
+          lines.push('');
+          lines.push(`🎬 Video **'${suite}'** started with **${passed}** ${successWord} and **${failed}** ${failureWord}`);
+          lines.push('');
+          lines.push(`${bar}  **${pct}%** &nbsp;(${passed + flaky}/${total} passed${skipped > 0 ? ` · ${skipped} skipped` : ''}${flaky > 0 ? ` · ${flaky} flaky` : ''})`);
+          lines.push('');
+
+          if (failed > 0) {
+            lines.push('### ❌ Failures');
+            suites.filter(s => s.status === 'failed').forEach(s => {
+              lines.push(`- **${s.title}** (${(s.duration/1000).toFixed(1)} s)`);
+            });
+            lines.push('');
+          }
+
+          if (skipped > 0) {
+            lines.push('<details><summary>⏭️ Skipped tests</summary>');
+            lines.push('');
+            suites.filter(s => s.status === 'skipped').forEach(s => {
+              lines.push(`- ${s.title}`);
+            });
+            lines.push('');
+            lines.push('</details>');
+            lines.push('');
+          }
+
+          lines.push(`> 📄 Download **${artifact}** artifact above for videos, screenshots, and measurements.`);
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
+          console.log('Executive summary written.');
+          EOF
+
+      - name: Upload Playwright report (navigation)
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report-navigation
+          path: playwright/playwright-report/
+          retention-days: 30
+
+      - name: Upload test artifacts (navigation)
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: test-results-navigation
+          path: playwright/test-results/
+          retention-days: 7
+
+  # ── Guide CC ───────────────────────────────────────────────────────────────
+  # Long-running: iterates every guide channel checking for CC (25 s/channel).
+  guide-cc:
+    name: "Guide / Closed Captions — All Channels"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: playwright/package-lock.json
+
+      - name: Install npm dependencies
+        run: npm ci
+        working-directory: playwright
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chrome
+        working-directory: playwright
+
+      - name: Run Guide CC test
+        run: npx playwright test --project=guideCC
+        working-directory: playwright
+        env:
+          CI: true
+          BASE_URL: ${{ secrets.BASE_URL }}
+          WATCH_URL: ${{ secrets.WATCH_URL }}
+          USERNAME: ${{ secrets.FRNDLY_USERNAME }}
+          PASSWORD: ${{ secrets.FRNDLY_PASSWORD }}
+          VIDEO_PLAY_SECONDS: ${{ secrets.VIDEO_PLAY_SECONDS || '25' }}
+          VIDEO_TIMEOUT_SECONDS: ${{ secrets.VIDEO_TIMEOUT_SECONDS || '30' }}
+          TESTRAIL_URL: ${{ secrets.TESTRAIL_URL }}
+          TESTRAIL_USER: ${{ secrets.TESTRAIL_USER }}
+          TESTRAIL_API_KEY: ${{ secrets.TESTRAIL_API_KEY }}
+          TESTRAIL_PROJECT_ID: ${{ secrets.TESTRAIL_PROJECT_ID }}
+          TESTRAIL_SUITE_ID: ${{ secrets.TESTRAIL_SUITE_ID }}
+          TESTRAIL_RUN_ID: ${{ secrets.TESTRAIL_RUN_ID }}
+
+      - name: Write executive summary
+        if: always()
+        working-directory: playwright
+        env:
+          SUITE_NAME: Guide / Closed Captions
+          ARTIFACT_NAME: playwright-report-guide-cc
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+
+          let stats = { expected: 0, unexpected: 0, skipped: 0, flaky: 0 };
+          let suites = [];
+
+          try {
+            const raw = fs.readFileSync('test-results/results.json', 'utf8');
+            const data = JSON.parse(raw);
+            stats = data.stats ?? stats;
+
+            function walk(suite, parentPath) {
+              if (!suite) return;
+              const path = [parentPath, suite.title].filter(Boolean).join(' / ');
+              (suite.suites ?? []).forEach(s => walk(s, path));
+              (suite.specs ?? []).forEach(spec => {
+                spec.tests?.forEach(t => {
+                  const status = t.results?.[0]?.status ?? 'unknown';
+                  const duration = t.results?.[0]?.duration ?? 0;
+                  const title = [path, spec.title].filter(Boolean).join(' / ');
+                  suites.push({ title, status, duration });
+                });
+              });
+            }
+            (data.suites ?? []).forEach(s => walk(s, ''));
+          } catch (e) {
+            console.error('Could not parse results.json:', e.message);
+          }
+
+          const total   = stats.expected + stats.unexpected + stats.skipped + stats.flaky;
+          const passed  = stats.expected;
+          const failed  = stats.unexpected;
+          const skipped = stats.skipped;
+          const flaky   = stats.flaky;
+          const suite   = process.env.SUITE_NAME ?? 'Tests';
+          const artifact = process.env.ARTIFACT_NAME ?? 'playwright-report';
+
+          const BLOCKS = 10;
+          const greenCount = total > 0 ? Math.round(((passed + flaky) / total) * BLOCKS) : 0;
+          const redCount   = failed > 0 ? Math.max(1, BLOCKS - greenCount) : 0;
+          const greyCount  = BLOCKS - greenCount - redCount;
+          const bar = '🟩'.repeat(greenCount) + '🟥'.repeat(redCount) + '⬜'.repeat(greyCount);
+          const pct = total > 0 ? Math.round(((passed + flaky) / total) * 100) : 0;
+
+          const successWord = passed === 1 ? 'success' : 'successes';
+          const failureWord = failed === 1 ? 'failure' : 'failures';
+          const headerIcon  = failed > 0 ? '📺❌' : '📺✅';
+
+          const lines = [];
+          lines.push(`## ${headerIcon} Frndly TV — ${suite}`);
+          lines.push('');
+          lines.push(`🎬 Video **'${suite}'** started with **${passed}** ${successWord} and **${failed}** ${failureWord}`);
+          lines.push('');
+          lines.push(`${bar}  **${pct}%** &nbsp;(${passed + flaky}/${total} passed${skipped > 0 ? ` · ${skipped} skipped` : ''}${flaky > 0 ? ` · ${flaky} flaky` : ''})`);
+          lines.push('');
+
+          if (failed > 0) {
+            lines.push('### ❌ Failures');
+            suites.filter(s => s.status === 'failed').forEach(s => {
+              lines.push(`- **${s.title}** (${(s.duration/1000).toFixed(1)} s)`);
+            });
+            lines.push('');
+          }
+
+          if (skipped > 0) {
+            lines.push('<details><summary>⏭️ Skipped tests</summary>');
+            lines.push('');
+            suites.filter(s => s.status === 'skipped').forEach(s => {
+              lines.push(`- ${s.title}`);
+            });
+            lines.push('');
+            lines.push('</details>');
+            lines.push('');
+          }
+
+          lines.push(`> 📄 Download **${artifact}** artifact for the channel-by-channel CC report (guide-cc-results attachment).`);
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n');
+          console.log('Executive summary written.');
+          EOF
+
+      - name: Upload Playwright report (guide-cc)
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report-guide-cc
+          path: playwright/playwright-report/
+          retention-days: 30
+
+      - name: Upload test artifacts (guide-cc)
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-results-guide-cc
+          path: playwright/test-results/
+          retention-days: 14

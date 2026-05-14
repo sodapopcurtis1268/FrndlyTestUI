@@ -30,6 +30,7 @@ export default defineConfig({
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
     ['list'],
     ['json', { outputFile: 'test-results/results.json' }],
+    ['./utils/testrailReporter.ts'],
   ],
 
   use: {
@@ -54,6 +55,18 @@ export default defineConfig({
     {
       name: 'setup',
       testMatch: /auth\.setup\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+      },
+    },
+
+    // ── Login suite ──────────────────────────────────────────────────────────
+    // Verifies end-to-end login flow with real credentials (no saved auth state).
+    //   npx playwright test --project=login
+    {
+      name: 'login',
+      testMatch: /\/login\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         channel: 'chrome',
@@ -100,6 +113,57 @@ export default defineConfig({
     {
       name: 'homeScreen',
       testMatch: /\/homeScreen\/.*\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+        storageState: '.auth/user.json',
+        video: 'on',
+      },
+      dependencies: ['setup'],
+    },
+
+    // ── Player suite ─────────────────────────────────────────────────────────
+    // Functional tests for video player features (CC, playback controls, etc.)
+    //   npx playwright test --project=player
+    {
+      name: 'player',
+      testMatch: /\/player\/(closedCaptions|rowInternalScrollLag)\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+        storageState: '.auth/user.json',
+        video: 'on',
+      },
+      dependencies: ['setup'],
+    },
+
+    // ── Guide CC suite ───────────────────────────────────────────────────────
+    // Long-running: iterates every guide channel, 25 s playback each.
+    //   npx playwright test --project=guideCC
+    {
+      name: 'guideCC',
+      testMatch: /\/player\/guideChannelCC\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chrome',
+        storageState: '.auth/user.json',
+        video: 'retain-on-failure',
+        // Allow video autoplay without a prior user gesture.
+        // page.goto() does not count as a user interaction so Chrome's default
+        // autoplay policy silently blocks live streams from playing.
+        launchOptions: {
+          args: ['--autoplay-policy=no-user-gesture-required'],
+        },
+      },
+      dependencies: ['setup'],
+    },
+
+    // ── Navigation suite ─────────────────────────────────────────────────────
+    // UX / Usability tests: focused states, keyboard navigation, header behaviour.
+    //   npx playwright test --project=navigation
+    {
+      name: 'navigation',
+      testMatch: /\/navigation\/.*\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         channel: 'chrome',

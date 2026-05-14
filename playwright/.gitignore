@@ -5,3 +5,6 @@ test-results/
 screenshots/
 .env
 .auth/
+
+# k6 HTML reports
+load-tests/reports/*.html

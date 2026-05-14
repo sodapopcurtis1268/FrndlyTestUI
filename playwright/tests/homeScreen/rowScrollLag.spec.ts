@@ -26,7 +26,7 @@ const MAX_LONG_TASK_MS = 300;
 test.describe('Home Screen', () => {
   test.describe('Performance', () => {
 
-    test('Navigate between rows — no visual lag during scroll', async ({ page }, testInfo) => {
+    test('Navigate between rows — no visual lag during scroll [C420690]', async ({ page }, testInfo) => {
 
       // ── Step 1: Navigate to Home ──────────────────────────────────────────
       await page.goto(config.homeUrl, {

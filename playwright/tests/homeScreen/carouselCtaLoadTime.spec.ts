@@ -72,7 +72,7 @@ const FOLIO_SELECTOR = [
 test.describe('Home Screen', () => {
   test.describe('Performance', () => {
 
-    test('User selects Carousel CTA — folio page loads in under 2 seconds', async ({ page }, testInfo) => {
+    test('User selects Carousel CTA — folio page loads in under 2 seconds [C420688]', async ({ page }, testInfo) => {
 
       // ── Step 1: Navigate to Home ──────────────────────────────────────────
       await page.goto(config.homeUrl, {

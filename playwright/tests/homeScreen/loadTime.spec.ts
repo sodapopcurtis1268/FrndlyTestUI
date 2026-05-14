@@ -22,7 +22,7 @@ const LOAD_TIME_THRESHOLD_MS = 2_000;
 test.describe('Home Screen', () => {
   test.describe('Performance', () => {
 
-    test('Load time does not exceed 2 seconds', async ({ page }, testInfo) => {
+    test('Load time does not exceed 2 seconds [C420687]', async ({ page }, testInfo) => {
 
       // ── Step 1: Open the Frndly App ───────────────────────────────────────
       // Timer starts before page.goto so the full network round-trip is captured
