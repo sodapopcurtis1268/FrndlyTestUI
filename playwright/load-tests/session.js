@@ -61,5 +61,5 @@ export function getSessionId() {
   if (envSession && envSession.length > 10) return envSession;
   // Fallback: last known good session from playwright/.auth/user.json
   // Refresh this by running: npx playwright test --project=setup
-  return '2958c85e-7b77-403a-b390-fd09d7e88b8b';
+  return 'd7b8b15b-a1e3-4a80-9b80-0b35d788dd18';
 }
